@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-#include "glog/logging.h"
+#include <glog/logging.h>
 
 using std::equal_to;
 using std::get;

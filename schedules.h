@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "glog/logging.h"
+#include <glog/logging.h>
 
 #include "generator.h"
 #include "schedule.h"

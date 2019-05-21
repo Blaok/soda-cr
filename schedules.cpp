@@ -5,8 +5,9 @@
 #include <memory>
 #include <unordered_set>
 
+#include <glog/logging.h>
+
 #include "generator.h"
-#include "glog/logging.h"
 
 using std::count;
 using std::distance;

@@ -11,10 +11,10 @@
 #include <sys/resource.h>
 #include <sys/time.h>
 
-#include "generator.h"
-#include "glog/logging.h"
-#include "json.hpp"
+#include <glog/logging.h>
+#include <nlohmann/json.hpp>
 
+#include "generator.h"
 #include "schedule.h"
 #include "schedules.h"
 

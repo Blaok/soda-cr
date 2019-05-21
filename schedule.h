@@ -12,11 +12,9 @@
 #include <variant>
 #include <vector>
 
+#include <glog/logging.h>
 #include <boost/intrusive_ptr.hpp>
-
-#include "glog/logging.h"
-
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 
 #include "generator.h"
 
