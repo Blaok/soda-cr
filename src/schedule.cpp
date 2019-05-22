@@ -1,6 +1,7 @@
 #include "schedule.h"
 
 #include <algorithm>
+#include <atomic>
 #include <list>
 #include <memory>
 #include <string>
@@ -11,6 +12,7 @@
 
 #include <glog/logging.h>
 
+using std::atomic_uint64_t;
 using std::equal_to;
 using std::get;
 using std::holds_alternative;
@@ -25,8 +27,8 @@ using std::visit;
 
 using nlohmann::json;
 
-uint64_t Schedule::constructed = 0;
-uint64_t Schedule::deconstructed = 0;
+atomic_uint64_t Schedule::constructed = 0;
+atomic_uint64_t Schedule::deconstructed = 0;
 
 size_t Schedule::Cost() const {
   auto children = Children();

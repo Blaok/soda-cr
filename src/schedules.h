@@ -1,6 +1,7 @@
 #ifndef SCHEDULES_H_
 #define SCHEDULES_H_
 
+#include <atomic>
 #include <list>
 #include <memory>
 #include <unordered_map>
@@ -62,8 +63,8 @@ struct Schedules {
   mutable std::vector<AAttrUnion> schedules;
   static bool cache_schedules;
 
-  static uint64_t constructed;
-  static uint64_t deconstructed;
+  static std::atomic_uint64_t constructed;
+  static std::atomic_uint64_t deconstructed;
   void* operator new(size_t size) {
     ++constructed;
     return ::operator new(size);
@@ -72,7 +73,8 @@ struct Schedules {
     ++deconstructed;
     ::operator delete(ptr);
     if (constructed == deconstructed) {
-      LOG(INFO) << "Schedules construct-and-deconstructed: " << constructed;
+      LOG(INFO) << "Schedules construct-and-deconstructed: "
+                << constructed.load();
     }
   }
 

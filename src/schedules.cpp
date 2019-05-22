@@ -1,6 +1,7 @@
 #include "schedules.h"
 
 #include <algorithm>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <unordered_set>
@@ -9,6 +10,7 @@
 
 #include "generator.h"
 
+using std::atomic_uint64_t;
 using std::count;
 using std::distance;
 using std::find;
@@ -17,8 +19,8 @@ using std::make_shared;
 using std::unordered_set;
 using std::vector;
 
-uint64_t Schedules::constructed = 0;
-uint64_t Schedules::deconstructed = 0;
+atomic_uint64_t Schedules::constructed = 0;
+atomic_uint64_t Schedules::deconstructed = 0;
 bool Schedules::cache_schedules = true;
 
 Schedules::Key Schedules::KeyOf(const Bits& operands) const {

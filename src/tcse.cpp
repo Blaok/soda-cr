@@ -74,10 +74,10 @@ int main(int argc, char* argv[]) {
     case Strategy::kBruteForce: {
       Schedules::Cache cache;
       best = (new Schedules(rattrs, aattrs, nullptr, &cache))->Best();
-      VLOG(1) << "Schedule::constructed: " << Schedule::constructed;
-      VLOG(1) << "Schedule::deconstructed: " << Schedule::deconstructed;
-      VLOG(1) << "Schedules::constructed: " << Schedules::constructed;
-      VLOG(1) << "Schedules::deconstructed: " << Schedules::deconstructed;
+      VLOG(1) << "Schedule::constructed: " << Schedule::constructed.load();
+      VLOG(1) << "Schedule::deconstructed: " << Schedule::deconstructed.load();
+      VLOG(1) << "Schedules::constructed: " << Schedules::constructed.load();
+      VLOG(1) << "Schedules::deconstructed: " << Schedules::deconstructed.load();
       break;
     }
     default:

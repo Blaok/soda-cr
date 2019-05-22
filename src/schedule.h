@@ -1,6 +1,7 @@
 #ifndef SCHEDULE_H_
 #define SCHEDULE_H_
 
+#include <atomic>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -74,8 +75,8 @@ struct Schedule {
   bool LeftIsLeaf() const { return std::holds_alternative<AAttr>(left); }
   bool RightIsLeaf() const { return std::holds_alternative<AAttr>(right); }
 
-  static uint64_t constructed;
-  static uint64_t deconstructed;
+  static std::atomic_uint64_t constructed;
+  static std::atomic_uint64_t deconstructed;
   void* operator new(size_t size) {
     ++constructed;
     return ::operator new(size);
