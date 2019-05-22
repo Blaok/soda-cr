@@ -30,9 +30,19 @@ using nlohmann::json;
 atomic_uint64_t Schedule::constructed = 0;
 atomic_uint64_t Schedule::deconstructed = 0;
 
-size_t Schedule::Cost() const {
+size_t Schedule::NumOps() const {
   auto children = Children();
   return unordered_set<Schedule>{children.begin(), children.end()}.size();
+}
+
+size_t Schedule::TotalDistance() const {
+  auto children = Children();
+  auto children_set = unordered_set<Schedule>{children.begin(), children.end()};
+  size_t total_distance = 0;
+  for (const auto& child : children_set) {
+    total_distance += child.distance;
+  }
+  return total_distance;
 }
 
 template <typename Iterator>

@@ -5,6 +5,7 @@
 #include <list>
 #include <memory>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <glog/logging.h>
@@ -115,21 +116,28 @@ struct Schedules {
   }
   Schedule Best() {
     auto schedules = Generate();
-    Schedule best;
-    size_t cost = 0;
+    Schedule::Ptr best;
+    size_t num_ops = 0;
+    size_t total_distance = 0;
     for (const auto& aattr_union : schedules) {
-      auto schedule = *std::get<Schedule::Ptr>(aattr_union);
-      auto schedule_cost = schedule.Cost();
-      VLOG(2) << "schedule: " << schedule << " cost: " << schedule_cost
-              << (cost != 0 ? " best: " + best.ToStrWithOffset() +
-                                  " cost: " + std::to_string(cost)
-                            : "");
-      if (cost == 0 || schedule_cost < cost) {
-        best = schedule;
-        cost = schedule_cost;
+      auto schedule = std::get<Schedule::Ptr>(aattr_union);
+      auto schedule_num_ops = schedule->NumOps();
+      auto schedule_total_distance = schedule->TotalDistance();
+      VLOG(2) << "schedule: " << schedule << " num_ops: " << schedule_num_ops
+              << (best != nullptr
+                      ? " best: " + best->ToStrWithOffset() +
+                            " num_ops: " + std::to_string(num_ops) +
+                            " total_distance: " + std::to_string(total_distance)
+                      : "");
+      if (best == nullptr || schedule_num_ops < num_ops ||
+          (schedule_num_ops == num_ops &&
+           schedule_total_distance < total_distance)) {
+        best = std::move(schedule);
+        num_ops = schedule_num_ops;
+        total_distance = schedule_total_distance;
       }
     }
-    return best;
+    return *best;
   }
 };
 

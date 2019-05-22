@@ -111,7 +111,8 @@ struct Schedule {
     }
   }
 
-  size_t Cost() const;
+  size_t NumOps() const;
+  size_t TotalDistance() const;
 
   Generator<Attr> GetAttrsWithOffset(RAttr offset = 0) const {
     if (auto ptr = std::get_if<AAttr>(&left)) {

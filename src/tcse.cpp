@@ -86,7 +86,8 @@ int main(int argc, char* argv[]) {
   auto t2 = system_clock::now();
 
   LOG(INFO) << "best: " << best;
-  LOG(INFO) << "cost: " << best.Cost();
+  LOG(INFO) << "num_ops: " << best.NumOps();
+  LOG(INFO) << "total_distance: " << best.TotalDistance();
   struct rusage resource_usage;
   PCHECK(getrusage(RUSAGE_SELF, &resource_usage) == 0)
       << "failed to get resource usage";
