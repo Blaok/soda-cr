@@ -77,7 +77,8 @@ int main(int argc, char* argv[]) {
       VLOG(1) << "Schedule::constructed: " << Schedule::constructed.load();
       VLOG(1) << "Schedule::deconstructed: " << Schedule::deconstructed.load();
       VLOG(1) << "Schedules::constructed: " << Schedules::constructed.load();
-      VLOG(1) << "Schedules::deconstructed: " << Schedules::deconstructed.load();
+      VLOG(1) << "Schedules::deconstructed: "
+              << Schedules::deconstructed.load();
       break;
     }
     default:
@@ -85,14 +86,19 @@ int main(int argc, char* argv[]) {
   }
   auto t2 = system_clock::now();
 
+  auto best_num_ops = best.NumOps();
+  auto best_total_distance = best.TotalDistance();
   LOG(INFO) << "best: " << best;
-  LOG(INFO) << "num_ops: " << best.NumOps();
-  LOG(INFO) << "total_distance: " << best.TotalDistance();
+  LOG(INFO) << "num_ops: " << best_num_ops;
+  LOG(INFO) << "total_distance: " << best_total_distance;
   struct rusage resource_usage;
   PCHECK(getrusage(RUSAGE_SELF, &resource_usage) == 0)
       << "failed to get resource usage";
   LOG(INFO) << "maxrss: " << resource_usage.ru_maxrss << " kB";
   LOG(INFO) << "walltime: " << duration<float>(t2 - t1).count() << " s";
-  std::cout << json(best).dump(2);
+  json json_best(best);
+  json_best["num_ops"] = best_num_ops;
+  json_best["total_distance"] = best_total_distance;
+  std::cout << json_best.dump(2);
   return 0;
 }
