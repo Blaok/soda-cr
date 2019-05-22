@@ -1,5 +1,4 @@
-#include <ctime>
-
+#include <chrono>
 #include <functional>
 #include <iostream>
 #include <limits>
@@ -24,6 +23,8 @@ using std::shared_ptr;
 using std::string;
 using std::unordered_set;
 using std::vector;
+using std::chrono::duration;
+using std::chrono::system_clock;
 
 using nlohmann::json;
 
@@ -65,7 +66,7 @@ int main(int argc, char* argv[]) {
   vector<AAttr> aattrs{json_root["aattrs"].begin(), json_root["aattrs"].end()};
 
   Schedule best;
-  auto t1 = std::clock();
+  auto t1 = system_clock::now();
   switch (strategy) {
     case Strategy::kGreedy:
       best = BestGreedySchedule(rattrs, aattrs);
@@ -82,7 +83,7 @@ int main(int argc, char* argv[]) {
     default:
       LOG(FATAL) << "unexpected strategy";
   }
-  auto t2 = std::clock();
+  auto t2 = system_clock::now();
 
   LOG(INFO) << "best: " << best;
   LOG(INFO) << "cost: " << best.Cost();
@@ -90,7 +91,7 @@ int main(int argc, char* argv[]) {
   PCHECK(getrusage(RUSAGE_SELF, &resource_usage) == 0)
       << "failed to get resource usage";
   LOG(INFO) << "maxrss: " << resource_usage.ru_maxrss << " kB";
-  LOG(INFO) << "walltime: " << double(t2 - t1) / CLOCKS_PER_SEC << " s";
+  LOG(INFO) << "walltime: " << duration<float>(t2 - t1).count() << " s";
   std::cout << json(best).dump(2);
   return 0;
 }
