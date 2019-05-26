@@ -141,32 +141,4 @@ struct Schedules {
   }
 };
 
-template <typename T, typename Iterator>
-inline Generator<std::list<T>> Combinations(Iterator begin, Iterator end,
-                                            size_t m) {
-  VLOG(5) << "Combinations of " << m << " out of " << std::distance(begin, end);
-  if (m == 0) {
-    co_yield std::list<T>();
-  } else if (std::distance(begin, end) == m) {
-    co_yield std::list<T>{begin, end};
-  } else {
-    const auto& front = *begin;
-    for (auto v : Combinations<T>(++begin, end, m - 1)) {
-      v.push_front(front);
-      co_yield v;
-    }
-    for (const auto& v : Combinations<T>(begin, end, m)) {
-      co_yield v;
-    }
-  }
-}
-
-inline Generator<size_t> SequentialRange(size_t n) {
-  for (size_t i = 0; i < n; ++i) {
-    co_yield i;
-  }
-}
-
-inline auto Range = SequentialRange;
-
 #endif  // SCHEDULES_H_

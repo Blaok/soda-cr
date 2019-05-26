@@ -46,14 +46,15 @@ size_t Schedule::TotalDistance() const {
 }
 
 template <typename Iterator>
-Schedule LinearSchedule(Iterator first, Iterator last) {
-  --last;
-  RAttr distance = last->rattr - first->rattr;
-  if (std::distance(first, last) == 1) {
-    return Schedule{first->aattr, last->aattr, distance};
+Schedule LinearSchedule(Iterator second, Iterator last) {
+  auto first = second++;
+  RAttr distance = second->rattr - first->rattr;
+  if (std::distance(second, last) == 1) {
+    return Schedule{first->aattr, second->aattr, distance};
   }
-  return Schedule{Schedule::Ptr(new Schedule{LinearSchedule(first, last)}),
-                  last->aattr, distance};
+  return Schedule{first->aattr,
+                  Schedule::Ptr(new Schedule{LinearSchedule(second, last)}),
+                  distance};
 }
 
 Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
@@ -75,13 +76,16 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
     new_attrs_map[i] = {attrs[i].rattr, attrs[i].aattr};
     VLOG(3) << "recv attr " << *attrs.rbegin();
   }
-  unordered_map<Schedule, list<pair<size_t, size_t>>> reuses;
+
+  // the value of reuses is a pair of <reuse list, insertion order>
+  // each list element is a pair of <idx_l, idx_r>
+  unordered_map<Schedule, pair<list<pair<size_t, size_t>>, size_t>> reuses;
 
   VLOG(2) << "look for reuse";
-  for (size_t i = 0; i < attrs.size(); ++i) {
+  for (size_t i : ReversedRange(attrs.size())) {
     const auto& left_rattr = attrs[i].rattr;
     const auto& left_aattr = attrs[i].aattr;
-    for (size_t j = i + 1; j < attrs.size(); ++j) {
+    for (size_t j : ReversedRange(attrs.size(), i + 1)) {
       const auto& right_rattr = attrs[j].rattr;
       const auto& right_aattr = attrs[j].aattr;
       VLOG(3) << "checking reuse of " << attrs[i] << " + " << attrs[j];
@@ -94,7 +98,10 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
 
       // look for reuse of this operation over all operands
       unordered_set<size_t> used;
-      for (size_t idx_l = 0; idx_l < attrs.size(); ++idx_l) {
+      // reuses.size() is used to keep track of the insertion order
+      // it is ok because we won't delete from it until we've finished inserting
+      reuses[operation].second = reuses.size();
+      for (size_t idx_l : ReversedRange(attrs.size())) {
         VLOG(4) << "  examining " << attrs[idx_l];
         const auto& attr_l = attrs[idx_l];
         const auto& rattr_l = attr_l.rattr;
@@ -110,7 +117,7 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
           continue;
         }
         size_t idx_r = idx_r_iter->second;
-        reuses[operation].push_back({idx_l, idx_r});
+        reuses[operation].first.push_back({idx_l, idx_r});
         used.insert({idx_l, idx_r});
         VLOG(4) << "  found (re)use of " << attrs[idx_l] << " + "
                 << attrs[idx_r];
@@ -123,7 +130,7 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
   VLOG(2) << "confirm reuse";
   auto reuses_iter = reuses.begin();
   while (reuses_iter != reuses.end()) {
-    if (reuses_iter->second.size() <= 1) {
+    if (reuses_iter->second.first.size() <= 1) {
       reuses_iter = reuses.erase(reuses_iter);
     } else {
       ++reuses_iter;
@@ -138,25 +145,35 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
   // only activate reused operationswith the maximum reuse
   // this avoids some of the sub-optimalities
   size_t max_reuse = 0;
-  for (const auto iter : reuses) {
-    max_reuse = std::max(max_reuse, iter.second.size());
+  for (const auto& iter : reuses) {
+    max_reuse = std::max(max_reuse, iter.second.first.size());
   }
   VLOG(1) << "max reuse: " << max_reuse;
 
-  vector<pair<Schedule, list<pair<size_t, size_t>>>> sorted_reuses{
-      reuses.begin(), reuses.end()};
+  vector<pair<Schedule, pair<list<pair<size_t, size_t>>, size_t>>>
+      sorted_reuses{reuses.begin(), reuses.end()};
   std::sort(sorted_reuses.begin(), sorted_reuses.end(),
             [](const decltype(sorted_reuses)::value_type& lhs,
                const decltype(sorted_reuses)::value_type& rhs) -> bool {
-              if (lhs.second.size() == rhs.second.size()) {
+              if (lhs.second.first.size() == rhs.second.first.size()) {
+                if (lhs.first.distance == rhs.first.distance) {
+                  return lhs.second.second < rhs.second.second;
+                }
                 return lhs.first.distance < rhs.first.distance;
               }
-              return lhs.second.size() > rhs.second.size();
+              return lhs.second.first.size() > rhs.second.first.size();
             });
+  for (const auto& reuse : sorted_reuses) {
+    VLOG(3) << "reuse of " << reuse.first << " inserted at "
+            << reuse.second.second << ":";
+    for (const auto& elem : reuse.second.first) {
+      VLOG(3) << "  " << attrs[elem.first] << " + " << attrs[elem.second];
+    }
+  }
 
   for (auto& reuse : sorted_reuses) {
     const auto& operation{reuse.first};
-    auto& reused_indices{reuse.second};
+    auto& reused_indices{reuse.second.first};
     auto iter = reused_indices.begin();
     while (iter != reused_indices.end()) {
       if (used.count(iter->first) == 0 && used.count(iter->second) == 0) {

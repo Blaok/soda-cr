@@ -2,6 +2,7 @@
 #define GENERATOR_H_
 
 #include <experimental/coroutine>
+#include <list>
 
 template <typename T>
 struct Generator {
@@ -69,5 +70,38 @@ struct Generator {
   }
   iterator end() { return {coroutine, true}; }
 };
+
+template <typename T, typename Iterator>
+inline Generator<std::list<T>> Combinations(Iterator begin, Iterator end,
+                                            size_t m) {
+  VLOG(5) << "Combinations of " << m << " out of " << std::distance(begin, end);
+  if (m == 0) {
+    co_yield std::list<T>();
+  } else if (std::distance(begin, end) == m) {
+    co_yield std::list<T>{begin, end};
+  } else {
+    const auto& front = *begin;
+    for (auto v : Combinations<T>(++begin, end, m - 1)) {
+      v.push_front(front);
+      co_yield v;
+    }
+    for (const auto& v : Combinations<T>(begin, end, m)) {
+      co_yield v;
+    }
+  }
+}
+
+inline Generator<size_t> Range(size_t end, size_t begin = 0) {
+  for (; begin < end; ++begin) {
+    co_yield begin;
+  }
+}
+
+inline Generator<size_t> ReversedRange(size_t end, size_t begin = 0) {
+  while (begin < end) {
+    --end;
+    co_yield end;
+  }
+}
 
 #endif  // GENERATOR_H_
