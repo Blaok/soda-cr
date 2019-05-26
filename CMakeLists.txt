@@ -16,3 +16,6 @@ target_link_libraries(tcse
                       libc++abi.a
                       glog::glog
                       nlohmann_json::nlohmann_json)
+
+# optional feature
+target_compile_definitions(tcse PRIVATE SCHEDULE_CACHE_ATTR_SET)
