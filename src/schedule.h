@@ -19,8 +19,8 @@
 
 #include "generator.h"
 
-using RAttr = uint8_t;
-using AAttr = uint8_t;
+using RAttr = uint16_t;
+using AAttr = uint16_t;
 
 struct Attr {
   RAttr rattr;
