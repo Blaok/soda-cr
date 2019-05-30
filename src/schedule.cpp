@@ -4,6 +4,7 @@
 #include <atomic>
 #include <list>
 #include <memory>
+#include <queue>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include <glog/logging.h>
+#include <glpk.h>
 
 using std::atomic_uint64_t;
 using std::equal_to;
@@ -20,6 +22,7 @@ using std::list;
 using std::make_shared;
 using std::ostringstream;
 using std::pair;
+using std::queue;
 using std::unordered_map;
 using std::unordered_set;
 using std::vector;
@@ -35,14 +38,234 @@ size_t Schedule::NumOps() const {
   return unordered_set<Schedule>{children.begin(), children.end()}.size();
 }
 
-size_t Schedule::TotalDistance() const {
-  auto children = Children();
-  auto children_set = unordered_set<Schedule>{children.begin(), children.end()};
-  size_t total_distance = 0;
-  for (const auto& child : children_set) {
-    total_distance += child.distance;
+Generator<pair<size_t, size_t>> GetAttrs(
+    const Schedule::Ptr& schedule,
+    const unordered_map<Schedule::Ptr, size_t>& reuses,
+    const size_t* offset_ptr = nullptr) {
+  auto reused_vid_iter = reuses.find(schedule);
+  if (reused_vid_iter != reuses.end() && offset_ptr != nullptr) {
+    co_yield{*offset_ptr, reused_vid_iter->second};
+  } else {
+    size_t offset = offset_ptr == nullptr ? 0 : *offset_ptr;
+    if (auto ptr = std::get_if<AAttr>(&schedule->left)) {
+      co_yield{offset, 0};
+    } else {
+      for (const auto& attr :
+           GetAttrs(std::get<Schedule::Ptr>(schedule->left), reuses, &offset)) {
+        co_yield attr;
+      }
+    }
+    offset += schedule->distance;
+    if (auto ptr = std::get_if<AAttr>(&schedule->right)) {
+      co_yield{offset, 0};
+    } else {
+      for (const auto& attr : GetAttrs(std::get<Schedule::Ptr>(schedule->right),
+                                       reuses, &offset)) {
+        co_yield attr;
+      }
+    }
   }
-  return total_distance;
+}
+
+bool Inline(
+    const unordered_map<size_t, unordered_set<size_t>>& dependers,
+    const unordered_map<size_t, unordered_map<size_t, pair<size_t, size_t>>>&
+        dependees,
+    size_t* src_vid_ptr, size_t* dst_vid_ptr) {
+  for (const auto& item : dependers) {
+    auto src_vid = item.first;
+    auto dst_vids = item.second;
+    if (dst_vids.size() == 1) {
+      auto dst_vid = *dst_vids.begin();
+      auto min_offset = dependees.at(dst_vid).at(src_vid).first;
+      auto max_offset = dependees.at(dst_vid).at(src_vid).second;
+      if (min_offset == max_offset) {
+        VLOG(2) << "var_" << src_vid << " is only accessed by var_" << dst_vid
+                << " @ " << min_offset << ", it should be inlined";
+        *src_vid_ptr = src_vid;
+        *dst_vid_ptr = dst_vid;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+size_t Schedule::TotalDistance() const {
+  unordered_map<Schedule::Ptr, size_t> tcse_vars;
+  unordered_map<size_t, Schedule::Ptr> tcse_var_table;
+  auto self = Schedule::Ptr(new Schedule{*this});
+  tcse_vars[self] = 1;
+  tcse_var_table[1] = self;
+  // var_0 is input, var_1 is output
+
+  unordered_map<Schedule::Ptr, size_t> counter;
+  for (auto child_obj : Children()) {
+    auto child = Schedule::Ptr(new Schedule{child_obj});
+    if (counter.count(child) == 0) {
+      counter[child] = 0;
+    }
+    ++counter[child];
+  }
+  for (const auto& item : counter) {
+    if (item.second > 1) {
+      tcse_vars[item.first] = tcse_vars.size() + 1;
+      tcse_var_table[tcse_vars.size()] = item.first;
+    }
+  }
+  for (const auto& item : tcse_vars) {
+    VLOG(2) << "var_" << item.second << ": " << *item.first;
+  }
+
+  queue<Schedule::Ptr> vars_to_process{{self}};
+  unordered_set<size_t> vars_to_process_set{1};
+  unordered_set<size_t> vars_processed{0};
+  unordered_map<size_t, unordered_set<size_t>> dependers;
+  unordered_map<size_t, unordered_map<size_t, pair<size_t, size_t>>> dependees;
+  while (!vars_to_process.empty()) {
+    auto schedule = vars_to_process.front();
+    vars_to_process.pop();
+    auto dst_vid = tcse_vars[schedule];
+    vars_to_process_set.erase(dst_vid);
+    vars_processed.insert(dst_vid);
+    for (const auto& attr : GetAttrs(schedule, tcse_vars)) {
+      auto offset = attr.first;
+      auto src_vid = attr.second;
+      VLOG(2) << "var_" << dst_vid << " accesses var_" << src_vid << " @ "
+              << offset;
+      dependers[src_vid].insert(dst_vid);
+      dependees[dst_vid].insert({src_vid, {offset, offset}});
+      auto min_offset = dependees[dst_vid][src_vid].first;
+      auto max_offset = dependees[dst_vid][src_vid].second;
+      dependees[dst_vid][src_vid] = {std::min(offset, min_offset),
+                                     std::max(offset, max_offset)};
+      if (vars_processed.count(src_vid) == 0 &&
+          vars_to_process_set.count(src_vid) == 0) {
+        vars_to_process.push(tcse_var_table[src_vid]);
+        vars_to_process_set.insert(src_vid);
+      }
+    }
+  }
+  for (size_t src_vid, dst_vid;
+       Inline(dependers, dependees, &src_vid, &dst_vid);) {
+    VLOG(2) << "trying to inline var_" << src_vid;
+    auto offset = dependees[dst_vid][src_vid].first;
+    for (const auto& item2 : dependees[src_vid]) {
+      auto src_src_vid = item2.first;
+      auto min_offset = item2.second.first;
+      auto max_offset = item2.second.second;
+      auto new_min_offset = min_offset + offset;
+      auto new_max_offset = max_offset + offset;
+      VLOG(2) << "var_" << dst_vid << " accesses var_" << src_vid << " @ "
+              << offset;
+      VLOG(2) << "var_" << src_vid << " accesses var_" << src_src_vid << " @ ["
+              << min_offset << ", " << max_offset << "]";
+      VLOG(2) << "therefore var_" << dst_vid << " accesses var_" << src_src_vid
+              << " @ [" << new_min_offset << ", " << new_max_offset
+              << "] via var_" << src_vid;
+      auto old_min_offset = new_min_offset;
+      auto old_max_offset = new_max_offset;
+      if (dependees[dst_vid].count(src_src_vid)) {
+        old_min_offset = dependees[dst_vid][src_src_vid].first;
+        old_max_offset = dependees[dst_vid][src_src_vid].second;
+        VLOG(2) << "var_" << dst_vid << " used to access var_" << src_src_vid
+                << " @ [" << old_min_offset << ", " << old_max_offset << "]";
+      }
+      dependees[dst_vid][src_src_vid] = {
+          std::min(old_min_offset, new_min_offset),
+          std::max(old_max_offset, new_max_offset)};
+      VLOG(2) << "after inlining, var_" << dst_vid << " accesses var_"
+              << src_src_vid << " @ [" << dependees[dst_vid][src_src_vid].first
+              << ", " << dependees[dst_vid][src_src_vid].second << "]";
+    }
+    for (auto item : dependees[src_vid]) {
+      auto src_src_vid = item.first;
+      dependers[src_src_vid].erase(src_vid);
+    }
+    dependers.erase(src_vid);
+    dependees[dst_vid].erase(src_vid);
+    dependees.erase(src_vid);
+  }
+
+  // solve ILP for optimal offsets
+  glp_prob* lp = glp_create_prob();
+  vector<int> ia{0};
+  vector<int> ja{0};
+  vector<double> ar{0.};
+  glp_set_obj_dir(lp, GLP_MIN);
+  // dependers.size() doesn't include the output
+  unordered_map<size_t, size_t> produce_offset_index_table{{1, 1}};
+  unordered_map<size_t, size_t> consume_offset_index_table{{1, 1}};
+  for (auto item : dependers) {
+    auto src_vid = item.first;
+    produce_offset_index_table[src_vid] = produce_offset_index_table.size() + 1;
+    consume_offset_index_table[src_vid] =
+        consume_offset_index_table.size() + dependers.size() + 2;
+  }
+
+  glp_add_cols(lp, dependers.size() * 2 + 2);
+  VLOG(3) << "add " << dependers.size() * 2 + 2 << " to ILP";
+  size_t num_rows = 0;
+  for (auto item : dependers) {
+    auto src_vid = item.first;
+    auto produce_offset_src_vid = produce_offset_index_table[src_vid];
+    auto consume_offset_src_vid = consume_offset_index_table[src_vid];
+    VLOG(3) << "index of consume_offset_" << src_vid << ": "
+            << consume_offset_src_vid;
+    // produce_offset_vid
+    VLOG(3) << "index of produce_offset_" << src_vid << ": "
+            << produce_offset_src_vid;
+    glp_set_col_bnds(lp, produce_offset_src_vid,
+                     src_vid == 0 || src_vid == 1 ? GLP_FX : GLP_LO, 0., 0.);
+    glp_set_obj_coef(lp, produce_offset_src_vid, -1.);
+    // consume_offset_vid
+    glp_set_col_bnds(lp, consume_offset_src_vid, GLP_LO, 0., 0.);
+    glp_set_obj_coef(lp, consume_offset_src_vid, 1.);
+    auto dst_vids = item.second;
+    for (auto dst_vid : dst_vids) {
+      auto produce_offset_dst_vid = produce_offset_index_table[dst_vid];
+      VLOG(3) << "index of produce_offset_" << dst_vid << ": "
+              << produce_offset_dst_vid;
+      auto min_offset = dependees[dst_vid][src_vid].first;
+      auto max_offset = dependees[dst_vid][src_vid].second;
+      // produce_offset_src_vid <= min_offset + produce_offset_dst_vid
+      glp_add_rows(lp, 2);
+      glp_set_row_bnds(lp, ++num_rows, GLP_UP, 0., min_offset);
+      ia.push_back(num_rows);
+      ja.push_back(produce_offset_src_vid);
+      ar.push_back(1.);
+      VLOG(3) << "ILP coefficient: a[" << *ia.rbegin() << ", " << *ja.rbegin()
+              << "] = " << *ar.rbegin();
+      ia.push_back(num_rows);
+      ja.push_back(produce_offset_dst_vid);
+      ar.push_back(-1.);
+      VLOG(3) << "ILP coefficient: a[" << *ia.rbegin() << ", " << *ja.rbegin()
+              << "] = " << *ar.rbegin();
+      // consume_offset_src_vid >= max_offset + produce_offset_dst_vid
+      glp_set_row_bnds(lp, ++num_rows, GLP_LO, max_offset, 0.);
+      ia.push_back(num_rows);
+      ja.push_back(consume_offset_src_vid);
+      ar.push_back(1.);
+      VLOG(3) << "ILP coefficient: a[" << *ia.rbegin() << ", " << *ja.rbegin()
+              << "] = " << *ar.rbegin();
+      ia.push_back(num_rows);
+      ja.push_back(produce_offset_dst_vid);
+      ar.push_back(-1.);
+      VLOG(3) << "ILP coefficient: a[" << *ia.rbegin() << ", " << *ja.rbegin()
+              << "] = " << *ar.rbegin();
+    }
+  }
+  VLOG(3) << "load ILP coefficient matrix";
+  glp_load_matrix(lp, ia.size() - 1, ia.data(), ja.data(), ar.data());
+  VLOG(3) << "solve ILP";
+  glp_smcp params;
+  glp_init_smcp(&params);
+  params.msg_lev = GLP_MSG_OFF;
+  glp_simplex(lp, &params);
+  size_t result = glp_get_obj_val(lp);
+  glp_delete_prob(lp);
+  glp_free_env();
+  return result;
 }
 
 template <typename Iterator>
@@ -99,7 +322,8 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
       // look for reuse of this operation over all operands
       unordered_set<size_t> used;
       // reuses.size() is used to keep track of the insertion order
-      // it is ok because we won't delete from it until we've finished inserting
+      // it is ok because we won't delete from it until we've finished
+      // inserting
       reuses[operation].second = reuses.size();
       for (size_t idx_l : ReversedRange(attrs.size())) {
         VLOG(4) << "  examining " << attrs[idx_l];

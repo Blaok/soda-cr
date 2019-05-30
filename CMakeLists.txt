@@ -12,6 +12,7 @@ target_compile_features(tcse PRIVATE cxx_std_17)
 target_compile_options(tcse PRIVATE -stdlib=libc++ -fcoroutines-ts -Wall)
 target_compile_options(glog PUBLIC -stdlib=libc++)
 target_link_libraries(tcse
+                      glpk
                       libc++.a
                       libc++abi.a
                       glog::glog

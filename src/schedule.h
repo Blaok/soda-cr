@@ -194,6 +194,14 @@ struct hash<Schedule::Ptr> {
 };
 
 template <>
+struct equal_to<Schedule::Ptr> {
+  constexpr bool operator()(const Schedule::Ptr& lhs,
+                            const Schedule::Ptr& rhs) const {
+    return *lhs == *rhs;
+  }
+};
+
+template <>
 struct equal_to<AAttrUnion> {
   constexpr bool operator()(const AAttrUnion& lhs,
                             const AAttrUnion& rhs) const {

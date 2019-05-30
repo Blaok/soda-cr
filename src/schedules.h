@@ -122,7 +122,7 @@ struct Schedules {
     for (const auto& aattr_union : schedules) {
       auto schedule = std::get<Schedule::Ptr>(aattr_union);
       auto schedule_num_ops = schedule->NumOps();
-      auto schedule_total_distance = schedule->TotalDistance();
+      size_t schedule_total_distance = -1;
       VLOG(2) << "schedule: " << schedule << " num_ops: " << schedule_num_ops
               << (best != nullptr
                       ? " best: " + best->ToStrWithOffset() +
@@ -131,10 +131,11 @@ struct Schedules {
                       : "");
       if (best == nullptr || schedule_num_ops < num_ops ||
           (schedule_num_ops == num_ops &&
-           schedule_total_distance < total_distance)) {
+           (schedule_total_distance = schedule->TotalDistance()) <
+               total_distance)) {
         best = std::move(schedule);
         num_ops = schedule_num_ops;
-        total_distance = schedule_total_distance;
+        total_distance = best->TotalDistance();
       }
     }
     return *best;
