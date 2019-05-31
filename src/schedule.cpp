@@ -482,3 +482,17 @@ void to_json(json& j, const AttrUnion& v) {
   j["rattr"] = v.rattr;
   j["aattr"] = v.aattr;
 }
+void from_json(const json& j, Schedule& v) {
+  v.left = j["left"].get<Schedule::ChildType>();
+  v.right = j["right"].get<Schedule::ChildType>();
+  v.distance = j["distance"].get<RAttr>();
+}
+void from_json(const json& j, Schedule::ChildType& v) {
+  if (j.contains("left") && j.contains("right") && j.contains("distance")) {
+    auto ptr = new Schedule;
+    j.get_to(*ptr);
+    v = Schedule::Ptr{ptr};
+  } else {
+    v = j.get<AAttr>();
+  }
+}

@@ -264,6 +264,8 @@ void to_json(nlohmann::json& j, const Attr& v);
 void to_json(nlohmann::json& j, const Schedule& v);
 void to_json(nlohmann::json& j, const AAttrUnion& v);
 void to_json(nlohmann::json& j, const AttrUnion& v);
+void from_json(const nlohmann::json& j, Schedule& v);
+void from_json(const nlohmann::json& j, Schedule::ChildType& v);
 
 // schedule creators
 template <typename Iterator>
