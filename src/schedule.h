@@ -66,6 +66,7 @@ struct Schedule {
   ChildType left;
   ChildType right;
   RAttr distance;
+  mutable size_t total_distance = 0;
 
   mutable uint32_t references = 0;
 #ifdef SCHEDULE_CACHE_ATTR_SET
@@ -158,6 +159,12 @@ struct Schedule {
   }
 
   bool operator!=(const Schedule& rhs) const { return !(*this == rhs); }
+
+  bool operator<(const Schedule& rhs) const {
+    return this->NumOps() < rhs.NumOps() ||
+           (this->NumOps() == rhs.NumOps() &&
+            this->TotalDistance() < rhs.TotalDistance());
+  }
 };
 
 inline void intrusive_ptr_add_ref(const Schedule* ptr) { ++ptr->references; }
@@ -269,9 +276,9 @@ void from_json(const nlohmann::json& j, Schedule::ChildType& v);
 
 // schedule creators
 template <typename Iterator>
-Schedule LinearSchedule(Iterator first, Iterator last);
-Schedule BestGreedySchedule(const std::vector<RAttr>& rattrs,
-                            const std::vector<AAttrUnion>& aattrs);
+Schedule::Ptr LinearSchedule(Iterator first, Iterator last);
+Generator<Schedule::Ptr> GreedySchedules(const std::vector<RAttr>& rattrs,
+                                         const std::vector<AAttrUnion>& aattrs);
 Schedule BestGreedySchedule(const std::vector<RAttr>& rattrs,
                             const std::vector<AAttr>& aattrs);
 
