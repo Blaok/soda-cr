@@ -72,9 +72,7 @@ bool Inline(
     const unordered_map<size_t, unordered_map<size_t, pair<size_t, size_t>>>&
         dependees,
     size_t* src_vid_ptr, size_t* dst_vid_ptr) {
-  for (const auto& item : dependers) {
-    auto src_vid = item.first;
-    auto dst_vids = item.second;
+  for (const auto& [src_vid, dst_vids] : dependers) {
     if (dst_vids.size() == 1) {
       auto dst_vid = *dst_vids.begin();
       auto min_offset = dependees.at(dst_vid).at(src_vid).first;
@@ -318,11 +316,9 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<RAttr>& rattrs,
 
   VLOG(2) << "look for reuse";
   for (size_t i : ReversedRange(attrs.size())) {
-    const auto& left_rattr = attrs[i].rattr;
-    const auto& left_aattr = attrs[i].aattr;
+    const auto& [left_rattr, left_aattr] = attrs[i];
     for (size_t j : ReversedRange(attrs.size(), i + 1)) {
-      const auto& right_rattr = attrs[j].rattr;
-      const auto& right_aattr = attrs[j].aattr;
+      const auto& [right_rattr, right_aattr] = attrs[j];
       VLOG(3) << "checking reuse of " << attrs[i] << " + " << attrs[j];
       Schedule::Ptr operation{
           new Schedule{left_aattr, right_aattr,
@@ -341,8 +337,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<RAttr>& rattrs,
       for (size_t idx_l : ReversedRange(attrs.size())) {
         VLOG(4) << "  examining " << attrs[idx_l];
         const auto& attr_l = attrs[idx_l];
-        const auto& rattr_l = attr_l.rattr;
-        const auto& aattr_l = attr_l.aattr;
+        const auto& [rattr_l, aattr_l] = attr_l;
         if (!equal_to<AAttrUnion>{}(aattr_l, left_aattr) || used.count(idx_l)) {
           continue;
         }
