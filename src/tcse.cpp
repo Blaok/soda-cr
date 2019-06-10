@@ -99,8 +99,7 @@ int main(int argc, char* argv[]) {
   json json_best(best);
   json_best["num_ops"] = best_num_ops;
   json_best["total_distance"] = best_total_distance;
-  json_best["rattrs"] = json_root["rattrs"];
-  json_best["aattrs"] = json_root["aattrs"];
-  std::cout << json_best.dump(2);
+  json_root.merge_patch(json_best);
+  std::cout << json_root.dump(2);
   return 0;
 }
