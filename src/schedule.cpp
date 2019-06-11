@@ -179,8 +179,8 @@ size_t Schedule::TotalDistance() const {
                 << dependees[dst_vid][src_src_vid].first << ", "
                 << dependees[dst_vid][src_src_vid].second << "]";
       }
-      for (auto item : dependees[src_vid]) {
-        auto src_src_vid = item.first;
+      for (auto [src_src_vid, _] : dependees[src_vid]) {
+        dependers[src_src_vid].insert(dst_vid);
         dependers[src_src_vid].erase(src_vid);
       }
       dependers.erase(src_vid);
