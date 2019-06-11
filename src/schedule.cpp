@@ -282,10 +282,14 @@ Schedule::Ptr LinearSchedule(Iterator second, Iterator last) {
 }
 
 Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
-                            const vector<AAttr>& aattrs) {
-  // vec must outlive generator
-  vector<AAttrUnion> vec{aattrs.begin(), aattrs.end()};
-  auto generator = GreedySchedules(rattrs, vec);
+                            const vector<AAttr>& aattrs,
+                            const Linearizer* linearizer, size_t num_pruned) {
+  vector<AttrUnion> attrs;
+  attrs.reserve(rattrs.size());
+  for (size_t i = 0; i < rattrs.size(); ++i) {
+    attrs.push_back(AttrUnion{rattrs[i], aattrs[i]});
+  }
+  auto generator = GreedySchedules(attrs, linearizer, num_pruned);
   auto iter = generator.begin();
   Schedule::Ptr best{*iter};
   for (; iter != generator.end(); ++iter) {
@@ -296,18 +300,16 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
   return *best;
 }
 
-Generator<Schedule::Ptr> GreedySchedules(const vector<RAttr>& rattrs,
-                                         const vector<AAttrUnion>& aattrs) {
+Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
+                                         const Linearizer* linearizer,
+                                         size_t num_pruned) {
   VLOG(2) << "prepare data structures";
-  vector<AttrUnion> attrs;
-  attrs.reserve(rattrs.size());
   unordered_map<AttrUnion, size_t> attr_map;
   unordered_map<size_t, AttrUnion> new_attrs_map;
-  for (size_t i = 0; i < rattrs.size(); ++i) {
-    attrs.push_back(AttrUnion{rattrs[i], aattrs[i]});
+  for (size_t i = 0; i < attrs.size(); ++i) {
     attr_map[attrs[i]] = i;
     new_attrs_map[i] = {attrs[i].rattr, attrs[i].aattr};
-    VLOG(3) << "recv attr " << *attrs.rbegin();
+    VLOG(3) << "recv attr " << attrs[i];
   }
 
   // the value of reuses is a pair of <reuse list, insertion order>
@@ -369,105 +371,123 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<RAttr>& rattrs,
     }
   }
 
+  auto aligns = [&linearizer](RAttr dis, size_t dim) -> bool {
+    assert(linearizer != nullptr);
+    auto idx = (*linearizer)(dis);
+    if (idx[dim] != 0) {
+      idx.erase(idx.begin() + dim);
+      return std::all_of(idx.begin(), idx.end(),
+                         [&](auto val) { return val == 0; });
+    }
+    return false;
+  };
+
+  if (linearizer != nullptr) {
+    for (auto dim : linearizer->ReversedDims()) {
+      if (std::any_of(reuses.begin(), reuses.end(),
+                      [&](const auto& item) -> bool {
+                        auto& [op, _] = item;
+                        return aligns(op->distance, dim);
+                      })) {
+        auto reuses_iter = reuses.begin();
+        while (reuses_iter != reuses.end()) {
+          auto& [op, _] = *reuses_iter;
+          auto& [reuse_list, insertion_order] = reuses_iter->second;
+          if (aligns(op->distance, dim)) {
+            auto reuse_list_iter = reuse_list.begin();
+            while (reuse_list_iter != reuse_list.end()) {
+              auto [idx_l, idx_r] = *reuse_list_iter;
+              if (aligns(attrs[idx_r].rattr - attrs[idx_l].rattr, dim)) {
+                ++reuse_list_iter;
+              } else {
+                reuse_list_iter = reuse_list.erase(reuse_list_iter);
+              }
+            }
+            ++reuses_iter;
+          } else {
+            reuses_iter = reuses.erase(reuses_iter);
+          }
+        }
+      }
+    }
+  }
+
   if (reuses.size() == 0) {
     co_yield LinearSchedule(attrs.begin(), attrs.end());
   } else {
-    unordered_set<size_t> used;
-    // only activate reused operationswith the maximum reuse
-    // this avoids some of the sub-optimalities
-    size_t max_reuse = 0;
-    for (const auto& iter : reuses) {
-      max_reuse = std::max(max_reuse, iter.second.first.size());
-    }
-    VLOG(1) << "max reuse: " << max_reuse;
-
-    vector<pair<Schedule::Ptr, pair<list<pair<size_t, size_t>>, size_t>>>
-        sorted_reuses{reuses.begin(), reuses.end()};
-    std::sort(sorted_reuses.begin(), sorted_reuses.end(),
-              [](const decltype(sorted_reuses)::value_type& lhs,
-                 const decltype(sorted_reuses)::value_type& rhs) -> bool {
-                if (lhs.second.first.size() == rhs.second.first.size()) {
-                  if (lhs.first->distance == rhs.first->distance) {
-                    return lhs.second.second < rhs.second.second;
+    // candidates store the linear schedule for faster comparison
+    vector<pair<Schedule::Ptr, vector<AttrUnion>>> candidates;
+    for (const auto& [op, _] : reuses) {
+      VLOG(5) << "find all compatible reuses that include " << *op;
+      auto new_attrs = new_attrs_map;
+      unordered_set<size_t> used;
+      auto do_reuse_for = [&](const Schedule::Ptr& schedule) {
+        auto reused_indices{reuses[schedule].first};
+        auto iter = reused_indices.begin();
+        while (iter != reused_indices.end()) {
+          if (used.count(iter->first) == 0 && used.count(iter->second) == 0) {
+            ++iter;
+          } else {
+            iter = reused_indices.erase(iter);
+          }
+        }
+        if (reused_indices.size() > 1) {
+          for (auto [idx_l, idx_r] : reused_indices) {
+            VLOG(6) << "reusing " << *schedule << " for " << attrs[idx_l]
+                    << " + " << attrs[idx_r];
+            new_attrs[idx_l] = {new_attrs[idx_l].rattr, schedule};
+            new_attrs.erase(idx_r);
+            used.insert({idx_l, idx_r});
+          }
+        }
+      };
+      do_reuse_for(op);
+      vector<pair<decltype(reuses)::key_type, decltype(reuses)::mapped_type>>
+          sorted_reuses{reuses.begin(), reuses.end()};
+      std::sort(sorted_reuses.begin(), sorted_reuses.end(),
+                [](const auto& lhs, const auto& rhs) -> bool {
+                  if (lhs.second.first.size() == rhs.second.first.size()) {
+                    if (lhs.first->distance == rhs.first->distance) {
+                      return lhs.second.second < rhs.second.second;
+                    }
+                    return lhs.first->distance < rhs.first->distance;
                   }
-                  return lhs.first->distance < rhs.first->distance;
-                }
-                return lhs.second.first.size() > rhs.second.first.size();
-              });
-    for (const auto& [schedule, reuse] : sorted_reuses) {
-      VLOG(3) << "reuse of " << schedule << " inserted at " << reuse.second
-              << ":";
-      for (const auto& [idx_l, idx_r] : reuse.first) {
-        VLOG(3) << "  " << attrs[idx_l] << " + " << attrs[idx_r];
+                  return lhs.second.first.size() > rhs.second.first.size();
+                });
+      for (const auto& [op, _] : sorted_reuses) {
+        do_reuse_for(op);
       }
-    }
-
-    for (auto& [operation, reuse] : sorted_reuses) {
-      auto& reused_indices{reuse.first};
-      auto iter = reused_indices.begin();
-      while (iter != reused_indices.end()) {
-        if (used.count(iter->first) == 0 && used.count(iter->second) == 0) {
-          ++iter;
-        } else {
-          iter = reused_indices.erase(iter);
+      vector<AttrUnion> new_attr_vec;
+      new_attr_vec.reserve(new_attrs.size());
+      for (size_t i = 0; i < attrs.size(); ++i) {
+        if (new_attrs.count(i)) {
+          new_attr_vec.push_back(new_attrs[i]);
         }
       }
-      if (reused_indices.size() < max_reuse) {
-        continue;
+      candidates.emplace_back(
+          LinearSchedule(new_attr_vec.begin(), new_attr_vec.end()),
+          new_attr_vec);
+    }
+    VLOG(3) << "processing candidates";
+    std::nth_element(
+        candidates.begin(),
+        std::min(candidates.begin() + num_pruned - 1, candidates.end()),
+        candidates.end(), [](const auto& lhs, const auto& rhs) -> bool {
+          return *lhs.first < *rhs.first;
+        });
+    VLOG(3) << "partially sorted candidates";
+    candidates.erase(
+        std::min(candidates.begin() + num_pruned, candidates.end()),
+        candidates.end());
+    VLOG(3) << "erased unused candidates";
+    for (const auto& [_, new_attrs] : candidates) {
+      for (const auto& schedule :
+           GreedySchedules(new_attrs, linearizer, num_pruned)) {
+        co_yield schedule;
       }
-      for (const auto& idx_pair : reused_indices) {
-        auto idx_l = idx_pair.first;
-        auto idx_r = idx_pair.second;
-        VLOG(2) << "reusing " << operation << " for " << attrs[idx_l] << " + "
-                << attrs[idx_r];
-        new_attrs_map[idx_l] = {new_attrs_map[idx_l].rattr, operation};
-        new_attrs_map.erase(idx_r);
-        used.insert({idx_l, idx_r});
-      }
-    }
-
-    vector<AttrUnion> sorted_new_attrs;
-    sorted_new_attrs.reserve(new_attrs_map.size());
-    for (const auto& item : new_attrs_map) {
-      sorted_new_attrs.push_back(item.second);
-    }
-    std::sort(sorted_new_attrs.begin(), sorted_new_attrs.end(),
-              [](const AttrUnion& lhs, const AttrUnion& rhs) {
-                return lhs.rattr < rhs.rattr;
-              });
-
-    if (VLOG_IS_ON(2)) {
-      ostringstream oss;
-      bool first = true;
-      for (const auto& item : sorted_new_attrs) {
-        if (first) {
-          first = false;
-        } else {
-          oss << ", ";
-        }
-        if (holds_alternative<AAttr>(item.aattr)) {
-          oss << Attr{item.rattr, get<AAttr>(item.aattr)};
-        } else {
-          oss << *get<Schedule::Ptr>(item.aattr) << "@" << item.rattr;
-        }
-      }
-      VLOG(2) << "new attrs: " << oss.str() << " (" << sorted_new_attrs.size()
-              << ")";
-    }
-
-    vector<RAttr> new_rattrs;
-    vector<AAttrUnion> new_aattrs;
-    new_rattrs.reserve(new_attrs_map.size());
-    new_aattrs.reserve(new_attrs_map.size());
-    for (const auto& attr : sorted_new_attrs) {
-      new_rattrs.push_back(attr.rattr);
-      new_aattrs.push_back(attr.aattr);
-    }
-    for (const auto& schedule : GreedySchedules(new_rattrs, new_aattrs)) {
-      co_yield schedule;
     }
   }
-};
+}
 
 // json serializers
 void to_json(json& j, const Attr& v) {

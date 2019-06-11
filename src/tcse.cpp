@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include "generator.h"
+#include "linearizer.h"
 #include "schedule.h"
 #include "schedules.h"
 
@@ -64,12 +65,20 @@ int main(int argc, char* argv[]) {
   LOG(INFO) << "aattrs: " << json_root["aattrs"];
   vector<RAttr> rattrs{json_root["rattrs"].begin(), json_root["rattrs"].end()};
   vector<AAttr> aattrs{json_root["aattrs"].begin(), json_root["aattrs"].end()};
+  shared_ptr<Linearizer> linearizer;
+  if (json_root.contains("linearizer")) {
+    linearizer = make_shared<Linearizer>(json_root["linearizer"]);
+  }
+  size_t num_pruned = 1;
+  if (json_root.contains("num_pruned")) {
+    num_pruned = json_root["num_pruned"];
+  }
 
   Schedule best;
   auto t1 = system_clock::now();
   switch (strategy) {
     case Strategy::kGreedy:
-      best = BestGreedySchedule(rattrs, aattrs);
+      best = BestGreedySchedule(rattrs, aattrs, linearizer.get(), num_pruned);
       break;
     case Strategy::kBruteForce: {
       Schedules::Cache cache;

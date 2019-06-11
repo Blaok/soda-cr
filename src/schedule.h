@@ -18,6 +18,7 @@
 #include <nlohmann/json.hpp>
 
 #include "generator.h"
+#include "linearizer.h"
 
 using RAttr = uint16_t;
 using AAttr = uint16_t;
@@ -277,9 +278,11 @@ void from_json(const nlohmann::json& j, Schedule::ChildType& v);
 // schedule creators
 template <typename Iterator>
 Schedule::Ptr LinearSchedule(Iterator first, Iterator last);
-Generator<Schedule::Ptr> GreedySchedules(const std::vector<RAttr>& rattrs,
-                                         const std::vector<AAttrUnion>& aattrs);
+Generator<Schedule::Ptr> GreedySchedules(const std::vector<AttrUnion>& aattrs,
+                                         const Linearizer* linearizer,
+                                         size_t num_pruned);
 Schedule BestGreedySchedule(const std::vector<RAttr>& rattrs,
-                            const std::vector<AAttr>& aattrs);
+                            const std::vector<AAttr>& aattrs,
+                            const Linearizer* linearizer, size_t num_pruned);
 
 #endif  // SCHEDULE_H_
