@@ -317,9 +317,9 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
   unordered_map<Schedule::Ptr, pair<list<pair<size_t, size_t>>, size_t>> reuses;
 
   VLOG(2) << "look for reuse";
-  for (size_t i : ReversedRange(attrs.size())) {
+  for (size_t i : Range(attrs.size())) {
     const auto& [left_rattr, left_aattr] = attrs[i];
-    for (size_t j : ReversedRange(attrs.size(), i + 1)) {
+    for (size_t j : Range(attrs.size(), i + 1)) {
       const auto& [right_rattr, right_aattr] = attrs[j];
       VLOG(3) << "checking reuse of " << attrs[i] << " + " << attrs[j];
       Schedule::Ptr operation{
@@ -336,7 +336,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       // it is ok because we won't delete from it until we've finished
       // inserting
       reuses[operation].second = reuses.size();
-      for (size_t idx_l : ReversedRange(attrs.size())) {
+      for (size_t idx_l : Range(attrs.size())) {
         VLOG(4) << "  examining " << attrs[idx_l];
         const auto& attr_l = attrs[idx_l];
         const auto& [rattr_l, aattr_l] = attr_l;
@@ -382,7 +382,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
     return false;
   };
 
-  if (linearizer != nullptr) {
+  if (linearizer != nullptr && reuses.size() > attrs.size()) {
     for (auto dim : linearizer->ReversedDims()) {
       if (std::any_of(reuses.begin(), reuses.end(),
                       [&](const auto& item) -> bool {

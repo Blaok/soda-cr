@@ -69,7 +69,7 @@ int main(int argc, char* argv[]) {
   if (json_root.contains("linearizer")) {
     linearizer = make_shared<Linearizer>(json_root["linearizer"]);
   }
-  size_t num_pruned = 1;
+  size_t num_pruned = 3;
   if (json_root.contains("num_pruned")) {
     num_pruned = json_root["num_pruned"];
   }
