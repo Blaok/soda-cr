@@ -20,6 +20,8 @@ using std::get;
 using std::holds_alternative;
 using std::list;
 using std::make_shared;
+using std::max;
+using std::min;
 using std::ostringstream;
 using std::pair;
 using std::queue;
@@ -331,11 +333,92 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       }
 
       // look for reuse of this operation over all operands
-      unordered_set<size_t> used;
+      auto& indices = reuses[operation].first;
+      reuses[operation].second = reuses.size();
       // reuses.size() is used to keep track of the insertion order
       // it is ok because we won't delete from it until we've finished
       // inserting
-      reuses[operation].second = reuses.size();
+      vector<vector<pair<size_t, size_t>>> group_lists;
+      unordered_map<size_t, size_t> group_table;
+      for (size_t idx_l : Range(attrs.size())) {
+        VLOG(4) << "  examining " << attrs[idx_l];
+        const auto& attr_l = attrs[idx_l];
+        const auto& [rattr_l, aattr_l] = attr_l;
+        if (!equal_to<AAttrUnion>{}(aattr_l, left_aattr)) {
+          continue;
+        }
+        AttrUnion attr_r = {
+            static_cast<RAttr>(rattr_l + right_rattr - left_rattr),
+            right_aattr};
+        auto idx_r_iter = attr_map.find(attr_r);
+        if (idx_r_iter == attr_map.end()) {
+          continue;
+        }
+        size_t idx_r = idx_r_iter->second;
+        // (idx_l, idx_r) is compatible with `operation`
+        VLOG(4) << "(" << idx_l << ", " << idx_r << ") is compatible with "
+                << *operation;
+        size_t group_id = 0;
+        auto iter = group_table.find(idx_l);
+        if (iter == group_table.end()) {
+          iter = group_table.find(idx_r);
+          if (iter == group_table.end()) {
+            group_id = group_lists.size();
+            group_lists.emplace_back();
+          } else {
+            group_id = iter->second;
+          }
+        } else {
+          group_id = iter->second;
+        }
+        group_lists[group_id].emplace_back(idx_l, idx_r);
+        group_table[idx_l] = group_id;
+        group_table[idx_r] = group_id;
+      }
+      VLOG(3) << "  generated group lists";
+
+      for (const auto& group_list : group_lists) {
+        if (group_list.size() % 2 != 0) {
+          for (size_t i = 0; i < group_list.size(); i += 2) {
+            VLOG(5) << "    add {" << group_list[i].first << ", "
+                    << group_list[i].second << "} to group list";
+            indices.push_back(group_list[i]);
+          }
+        }
+      }
+      VLOG(3) << "  added odd conflict group lists";
+
+      auto cmp = [](const auto& lhs, const auto& rhs) -> bool {
+        return lhs.first < rhs.first;
+      };
+      auto min_idx_l =
+          indices.empty()
+              ? 0
+              : std::min_element(indices.begin(), indices.end(), cmp)->first;
+      auto max_idx_l =
+          indices.empty()
+              ? attrs.size() - 1
+              : std::max_element(indices.begin(), indices.end(), cmp)->first;
+      VLOG(3) << "min_idx_l: " << min_idx_l << " | max_idx_l: " << max_idx_l;
+
+      for (const auto& group_list : group_lists) {
+        if (group_list.size() % 2 == 0) {
+          auto span_0 =
+              attrs[max((++group_list.rbegin())->first, max_idx_l)].rattr -
+              attrs[min(group_list.begin()->first, min_idx_l)].rattr;
+          auto span_1 =
+              attrs[max(group_list.rbegin()->first, max_idx_l)].rattr -
+              attrs[min((++group_list.begin())->first, min_idx_l)].rattr;
+          VLOG(5) << "span 0: " << span_0 << "span 1: " << span_1;
+          auto start = span_0 < span_1 ? 0 : 1;
+          for (size_t i = start; i < group_list.size(); i += 2) {
+            indices.push_back(group_list[i]);
+          }
+        }
+      }
+      continue;
+
+      unordered_set<size_t> used;
       for (size_t idx_l : Range(attrs.size())) {
         VLOG(4) << "  examining " << attrs[idx_l];
         const auto& attr_l = attrs[idx_l];
@@ -392,15 +475,15 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
         auto reuses_iter = reuses.begin();
         while (reuses_iter != reuses.end()) {
           auto& [op, _] = *reuses_iter;
-          auto& [reuse_list, insertion_order] = reuses_iter->second;
+          auto& [indices, insertion_order] = reuses_iter->second;
           if (aligns(op->distance, dim)) {
-            auto reuse_list_iter = reuse_list.begin();
-            while (reuse_list_iter != reuse_list.end()) {
-              auto [idx_l, idx_r] = *reuse_list_iter;
+            auto indices_iter = indices.begin();
+            while (indices_iter != indices.end()) {
+              auto [idx_l, idx_r] = *indices_iter;
               if (aligns(attrs[idx_r].rattr - attrs[idx_l].rattr, dim)) {
-                ++reuse_list_iter;
+                ++indices_iter;
               } else {
-                reuse_list_iter = reuse_list.erase(reuse_list_iter);
+                indices_iter = indices.erase(indices_iter);
               }
             }
             ++reuses_iter;
