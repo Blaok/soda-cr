@@ -25,6 +25,7 @@ using std::min;
 using std::ostringstream;
 using std::pair;
 using std::queue;
+using std::tuple;
 using std::unordered_map;
 using std::unordered_set;
 using std::vector;
@@ -317,6 +318,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
   // the value of reuses is a pair of <reuse list, insertion order>
   // each list element is a pair of <idx_l, idx_r>
   unordered_map<Schedule::Ptr, pair<list<pair<size_t, size_t>>, size_t>> reuses;
+  unordered_map<Schedule::Ptr, size_t> conflict_count;
 
   VLOG(2) << "look for reuse";
   for (size_t i : Range(attrs.size())) {
@@ -376,6 +378,15 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
         group_table[idx_r] = group_id;
       }
       VLOG(3) << "  generated group lists";
+
+      for (const auto& group_list : group_lists) {
+        if (group_list.size() > 1) {
+          if (conflict_count.count(operation) == 0) {
+            conflict_count[operation] = 0;
+          }
+          ++conflict_count[operation];
+        }
+      }
 
       for (const auto& group_list : group_lists) {
         if (group_list.size() % 2 != 0) {
@@ -499,7 +510,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
     co_yield LinearSchedule(attrs.begin(), attrs.end());
   } else {
     // candidates store the linear schedule for faster comparison
-    vector<pair<Schedule::Ptr, vector<AttrUnion>>> candidates;
+    vector<tuple<size_t, Schedule::Ptr, vector<AttrUnion>>> candidates;
     for (const auto& [op, _] : reuses) {
       VLOG(5) << "find all compatible reuses that include " << *op;
       auto new_attrs = new_attrs_map;
@@ -548,6 +559,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
         }
       }
       candidates.emplace_back(
+          conflict_count[op],
           LinearSchedule(new_attr_vec.begin(), new_attr_vec.end()),
           new_attr_vec);
     }
@@ -556,14 +568,18 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
         candidates.begin(),
         std::min(candidates.begin() + num_pruned - 1, candidates.end()),
         candidates.end(), [](const auto& lhs, const auto& rhs) -> bool {
-          return *lhs.first < *rhs.first;
+          const auto& [conflict_count_l, schedule_l, candicate_l] = lhs;
+          const auto& [conflict_count_r, schedule_r, candidate_r] = rhs;
+          return conflict_count_l < conflict_count_r ||
+                 (conflict_count_l == conflict_count_r &&
+                  *schedule_l < *schedule_r);
         });
     VLOG(3) << "partially sorted candidates";
     candidates.erase(
         std::min(candidates.begin() + num_pruned, candidates.end()),
         candidates.end());
     VLOG(3) << "erased unused candidates";
-    for (const auto& [_, new_attrs] : candidates) {
+    for (const auto& [count, schedule, new_attrs] : candidates) {
       for (const auto& schedule :
            GreedySchedules(new_attrs, linearizer, num_pruned)) {
         co_yield schedule;
