@@ -64,6 +64,8 @@ class Linearizer {
   }
   Int operator()(const std::vector<Int>& rattr) const { return Apply(rattr); }
   std::vector<Int> operator()(Int rattr) const { return Restore(rattr); }
+  const auto& Mins() const { return mins_; }
+  const auto& Maxs() const { return maxs_; }
 
  private:
   std::vector<Int> maxs_;

@@ -467,13 +467,12 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
 
   auto aligns = [&linearizer](RAttr dis, size_t dim) -> bool {
     assert(linearizer != nullptr);
-    auto idx = (*linearizer)(dis);
-    if (idx[dim] != 0) {
-      idx.erase(idx.begin() + dim);
-      return std::all_of(idx.begin(), idx.end(),
-                         [&](auto val) { return val == 0; });
-    }
-    return false;
+    return std::all_of(linearizer->Dims().begin(), linearizer->Dims().end(),
+                       [&](const auto d) -> bool {
+                         const auto idx = linearizer->Restore(dis)[d];
+                         const auto min_idx = linearizer->Mins()[d];
+                         return d == dim ? idx != min_idx : idx == min_idx;
+                       });
   };
 
   if (linearizer != nullptr && reuses.size() > attrs.size()) {
