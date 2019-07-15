@@ -15,10 +15,7 @@ target_compile_features(schedule PUBLIC cxx_std_17)
 target_compile_options(schedule PUBLIC -stdlib=libc++ -fcoroutines-ts -Wall)
 target_compile_options(glog PUBLIC -stdlib=libc++)
 target_link_libraries(schedule
-                      PRIVATE libglpk.a
-                              libltdl.a
-                              z
-                              dl
+                      PRIVATE glpk
                       PUBLIC glog::glog
                              nlohmann_json::nlohmann_json
                              libc++.a
