@@ -25,6 +25,8 @@ using std::min;
 using std::ostringstream;
 using std::pair;
 using std::queue;
+using std::string;
+using std::to_string;
 using std::tuple;
 using std::unordered_map;
 using std::unordered_set;
@@ -340,7 +342,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       // reuses.size() is used to keep track of the insertion order
       // it is ok because we won't delete from it until we've finished
       // inserting
-      vector<vector<pair<size_t, size_t>>> group_lists;
+      vector<vector<pair<int64_t, int64_t>>> group_lists;
       unordered_map<size_t, size_t> group_table;
       for (size_t idx_l : Range(attrs.size())) {
         VLOG(4) << "  examining " << attrs[idx_l];
@@ -381,6 +383,17 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
 
       for (const auto& group_list : group_lists) {
         if (group_list.size() > 1) {
+          if (VLOG_IS_ON(3)) {
+            string group_list_str{"["};
+            for (const auto& p : group_list) {
+              group_list_str +=
+                  "(" + to_string(p.first) + ", " + to_string(p.second) + "), ";
+            }
+            group_list_str.pop_back();
+            *group_list_str.rbegin() = ']';
+            VLOG(3) << "conflict group of " << *operation << ": "
+                    << group_list_str;
+          }
           if (conflict_count.count(operation) == 0) {
             conflict_count[operation] = 0;
           }
@@ -402,25 +415,25 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       auto cmp = [](const auto& lhs, const auto& rhs) -> bool {
         return lhs.first < rhs.first;
       };
-      auto min_idx_l =
+      int64_t min_idx_l =
           indices.empty()
               ? 0
               : std::min_element(indices.begin(), indices.end(), cmp)->first;
-      auto max_idx_l =
+      int64_t max_idx_l =
           indices.empty()
-              ? attrs.size() - 1
+              ? -1
               : std::max_element(indices.begin(), indices.end(), cmp)->first;
       VLOG(3) << "min_idx_l: " << min_idx_l << " | max_idx_l: " << max_idx_l;
 
       for (const auto& group_list : group_lists) {
         if (group_list.size() % 2 == 0) {
           auto span_0 =
-              attrs[max((++group_list.rbegin())->first, max_idx_l)].rattr -
+              attrs[max(((++group_list.rbegin())->first), max_idx_l)].rattr -
               attrs[min(group_list.begin()->first, min_idx_l)].rattr;
           auto span_1 =
-              attrs[max(group_list.rbegin()->first, max_idx_l)].rattr -
+              attrs[max((group_list.rbegin()->first), max_idx_l)].rattr -
               attrs[min((++group_list.begin())->first, min_idx_l)].rattr;
-          VLOG(5) << "span 0: " << span_0 << "span 1: " << span_1;
+          VLOG(5) << "span 0: " << span_0 << ", span 1: " << span_1;
           auto start = span_0 < span_1 ? 0 : 1;
           for (size_t i = start; i < group_list.size(); i += 2) {
             indices.push_back(group_list[i]);
