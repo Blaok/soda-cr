@@ -102,8 +102,8 @@ struct Schedule {
            ")";
   }
 
-  Generator<Schedule> Children() const {
-    co_yield* this;
+  Generator<Schedule::Ptr> Children() const {
+    co_yield this;
     for (const auto& child : {left, right}) {
       if (auto ptr = std::get_if<Ptr>(&child)) {
         for (const auto& schedule : (*ptr)->Children()) {

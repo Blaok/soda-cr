@@ -40,7 +40,7 @@ atomic_uint64_t Schedule::deconstructed = 0;
 
 size_t Schedule::NumOps() const {
   auto children = Children();
-  return unordered_set<Schedule>{children.begin(), children.end()}.size();
+  return unordered_set<Schedule::Ptr>{children.begin(), children.end()}.size();
 }
 
 Generator<pair<size_t, size_t>> GetAttrs(
@@ -98,14 +98,13 @@ size_t Schedule::TotalDistance() const {
   if (this->total_distance == 0) {
     unordered_map<Schedule::Ptr, size_t> tcse_vars;
     unordered_map<size_t, Schedule::Ptr> tcse_var_table;
-    auto self = Schedule::Ptr(new Schedule{*this});
+    auto self = Schedule::Ptr(this);
     tcse_vars[self] = 1;
     tcse_var_table[1] = self;
     // var_0 is input, var_1 is output
 
     unordered_map<Schedule::Ptr, size_t> counter;
-    for (auto child_obj : Children()) {
-      auto child = Schedule::Ptr(new Schedule{child_obj});
+    for (auto child : Children()) {
       if (counter.count(child) == 0) {
         counter[child] = 0;
       }
