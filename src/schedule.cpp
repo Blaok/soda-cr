@@ -18,17 +18,10 @@
 using std::atomic_uint64_t;
 using std::equal_to;
 using std::get;
-using std::holds_alternative;
-using std::list;
-using std::make_shared;
 using std::max;
 using std::min;
-using std::ostringstream;
 using std::pair;
 using std::queue;
-using std::string;
-using std::to_string;
-using std::tuple;
 using std::unordered_map;
 using std::unordered_set;
 using std::vector;
@@ -59,7 +52,7 @@ Generator<pair<size_t, size_t>> GetAttrs(
       co_yield{offset, 0};
     } else {
       for (const auto& attr :
-           GetAttrs(std::get<Schedule::Ptr>(schedule->left), reuses, &offset)) {
+           GetAttrs(get<Schedule::Ptr>(schedule->left), reuses, &offset)) {
         co_yield attr;
       }
     }
@@ -144,8 +137,8 @@ size_t Schedule::TotalDistance() const {
         dependees[dst_vid].insert({src_vid, {offset, offset}});
         auto min_offset = dependees[dst_vid][src_vid].first;
         auto max_offset = dependees[dst_vid][src_vid].second;
-        dependees[dst_vid][src_vid] = {std::min(offset, min_offset),
-                                       std::max(offset, max_offset)};
+        dependees[dst_vid][src_vid] = {min(offset, min_offset),
+                                       max(offset, max_offset)};
         if (vars_processed.count(src_vid) == 0 &&
             vars_to_process_set.count(src_vid) == 0) {
           vars_to_process.push(tcse_var_table[src_vid]);
@@ -178,9 +171,8 @@ size_t Schedule::TotalDistance() const {
           VLOG(2) << "var_" << dst_vid << " used to access var_" << src_src_vid
                   << " @ [" << old_min_offset << ", " << old_max_offset << "]";
         }
-        dependees[dst_vid][src_src_vid] = {
-            std::min(old_min_offset, new_min_offset),
-            std::max(old_max_offset, new_max_offset)};
+        dependees[dst_vid][src_src_vid] = {min(old_min_offset, new_min_offset),
+                                           max(old_max_offset, new_max_offset)};
         VLOG(2) << "after inlining, var_" << dst_vid << " accesses var_"
                 << src_src_vid << " @ ["
                 << dependees[dst_vid][src_src_vid].first << ", "
@@ -331,7 +323,8 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
 
   // the value of reuses is a pair of <reuse list, insertion order>
   // each list element is a pair of <idx_l, idx_r>
-  unordered_map<Schedule::Ptr, pair<list<pair<size_t, size_t>>, size_t>> reuses;
+  unordered_map<Schedule::Ptr, pair<std::list<pair<size_t, size_t>>, size_t>>
+      reuses;
   unordered_map<Schedule::Ptr, size_t> conflict_count;
 
   VLOG(2) << "look for reuse";
@@ -396,10 +389,10 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       for (const auto& group_list : group_lists) {
         if (group_list.size() > 1) {
           if (VLOG_IS_ON(3)) {
-            string group_list_str{"["};
+            std::string group_list_str{"["};
             for (const auto& p : group_list) {
-              group_list_str +=
-                  "(" + to_string(p.first) + ", " + to_string(p.second) + "), ";
+              group_list_str += "(" + std::to_string(p.first) + ", " +
+                                std::to_string(p.second) + "), ";
             }
             group_list_str.pop_back();
             *group_list_str.rbegin() = ']';
@@ -586,7 +579,7 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       for (const auto& [op, _] : sorted_reuses) {
         do_reuse_for(op);
       }
-      auto new_attr_vec = make_shared<vector<AttrUnion>>();
+      auto new_attr_vec = std::make_unique<vector<AttrUnion>>();
       new_attr_vec->reserve(new_attrs.size());
       for (size_t i = 0; i < attrs.size(); ++i) {
         if (new_attrs.count(i)) {
@@ -625,10 +618,10 @@ void to_json(json& j, const Schedule& v) {
   j["distance"] = v.distance;
 }
 void to_json(json& j, const AAttrUnion& v) {
-  if (holds_alternative<AAttr>(v)) {
-    j = get<AAttr>(v);
+  if (std::holds_alternative<AAttr>(v)) {
+    j = std::get<AAttr>(v);
   } else {
-    j = *get<Schedule::Ptr>(v);
+    j = *std::get<Schedule::Ptr>(v);
   }
 }
 void to_json(json& j, const AttrUnion& v) {
