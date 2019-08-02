@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <list>
 #include <memory>
 #include <queue>
@@ -31,7 +32,9 @@ using std::tuple;
 using std::unordered_map;
 using std::unordered_set;
 using std::vector;
-using std::visit;
+using std::chrono::duration;
+using std::chrono::duration_cast;
+using std::chrono::high_resolution_clock;
 
 using nlohmann::json;
 
@@ -299,9 +302,16 @@ Schedule BestGreedySchedule(const vector<RAttr>& rattrs,
   auto generator = GreedySchedules(attrs, linearizer, num_pruned);
   auto iter = generator.begin();
   Schedule::Ptr best{*iter};
+  auto start = high_resolution_clock::now();
+  double timeout{1};  //  seconds
   for (; iter != generator.end(); ++iter) {
     if (**iter < *best) {
       best = *iter;
+    }
+    auto now = high_resolution_clock::now();
+    if (duration_cast<duration<double>>(now - start).count() > timeout) {
+      LOG(INFO) << "timeout after " << timeout << "s.";
+      return *best;
     }
   }
   return *best;
