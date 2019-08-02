@@ -67,6 +67,7 @@ int main(int argc, char* argv[]) {
   vector<AAttr> aattrs{json_root["aattrs"].begin(), json_root["aattrs"].end()};
   shared_ptr<Linearizer> linearizer;
   if (json_root.contains("linearizer")) {
+    LOG(INFO) << "linearizer: " << json_root["linearizer"];
     linearizer = make_shared<Linearizer>(json_root["linearizer"]);
   }
   size_t num_pruned = 3;
