@@ -524,7 +524,18 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
     co_yield LinearSchedule(attrs.begin(), attrs.end());
   } else {
     // candidates store the linear schedule for faster comparison
-    vector<tuple<size_t, Schedule::Ptr, vector<AttrUnion>>> candidates;
+    vector<
+        std::tuple<size_t, Schedule::Ptr, std::unique_ptr<vector<AttrUnion>>>>
+        candidates;
+    candidates.reserve(num_pruned + 1);
+    auto candidate_cmp = [](const auto& lhs, const auto& rhs) -> bool {
+      const auto& [conflict_count_l, schedule_l, candicate_l] = lhs;
+      const auto& [conflict_count_r, schedule_r, candidate_r] = rhs;
+      return (
+          conflict_count_l < conflict_count_r ||
+          (conflict_count_l == conflict_count_r && *schedule_l < *schedule_r));
+    };
+    LOG(INFO) << "num of reuses: " << reuses.size();
     for (const auto& [op, _] : reuses) {
       VLOG(5) << "find all compatible reuses that include " << *op;
       auto new_attrs = new_attrs_map;
@@ -565,37 +576,28 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       for (const auto& [op, _] : sorted_reuses) {
         do_reuse_for(op);
       }
-      vector<AttrUnion> new_attr_vec;
-      new_attr_vec.reserve(new_attrs.size());
+      auto new_attr_vec = make_shared<vector<AttrUnion>>();
+      new_attr_vec->reserve(new_attrs.size());
       for (size_t i = 0; i < attrs.size(); ++i) {
         if (new_attrs.count(i)) {
-          new_attr_vec.push_back(new_attrs[i]);
+          new_attr_vec->push_back(new_attrs[i]);
         }
       }
       candidates.emplace_back(
           conflict_count[op],
-          LinearSchedule(new_attr_vec.begin(), new_attr_vec.end()),
-          new_attr_vec);
+          LinearSchedule(new_attr_vec->begin(), new_attr_vec->end()),
+          std::move(new_attr_vec));
+      std::push_heap(candidates.begin(), candidates.end(), candidate_cmp);
+      // keep only up to num_pruned numbers
+      if (candidates.size() > num_pruned) {
+        std::pop_heap(candidates.begin(), candidates.end(), candidate_cmp);
+        candidates.pop_back();
+      }
     }
-    VLOG(3) << "processing candidates";
-    std::nth_element(
-        candidates.begin(),
-        std::min(candidates.begin() + num_pruned - 1, candidates.end()),
-        candidates.end(), [](const auto& lhs, const auto& rhs) -> bool {
-          const auto& [conflict_count_l, schedule_l, candicate_l] = lhs;
-          const auto& [conflict_count_r, schedule_r, candidate_r] = rhs;
-          return conflict_count_l < conflict_count_r ||
-                 (conflict_count_l == conflict_count_r &&
-                  *schedule_l < *schedule_r);
-        });
-    VLOG(3) << "partially sorted candidates";
-    candidates.erase(
-        std::min(candidates.begin() + num_pruned, candidates.end()),
-        candidates.end());
-    VLOG(3) << "erased unused candidates";
-    for (const auto& [count, schedule, new_attrs] : candidates) {
+    std::sort(candidates.begin(), candidates.end(), candidate_cmp);
+    for (const auto& [count, _, new_attrs] : candidates) {
       for (const auto& schedule :
-           GreedySchedules(new_attrs, linearizer, num_pruned)) {
+           GreedySchedules(*new_attrs, linearizer, num_pruned)) {
         co_yield schedule;
       }
     }
