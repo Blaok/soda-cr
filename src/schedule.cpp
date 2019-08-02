@@ -197,6 +197,9 @@ size_t Schedule::TotalDistance() const {
     vector<int> ia{0};
     vector<int> ja{0};
     vector<double> ar{0.};
+    ia.reserve(4096);
+    ja.reserve(4096);
+    ar.reserve(2048);
     glp_set_obj_dir(lp, GLP_MIN);
     // dependers.size() doesn't include the output
     unordered_map<size_t, size_t> produce_offset_index_table{{1, 1}};
