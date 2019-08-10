@@ -20,7 +20,7 @@
 #include "generator.h"
 #include "linearizer.h"
 
-using RAttr = uint16_t;
+using RAttr = uint32_t;
 using AAttr = uint16_t;
 
 struct Attr {
