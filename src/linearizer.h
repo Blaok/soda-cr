@@ -11,8 +11,10 @@ class Linearizer {
   using Int = int;
   Linearizer(const nlohmann::json& j)
       : maxs_{j["maxs"].begin(), j["maxs"].end()},
-        mins_{j["mins"].begin(), j["mins"].end()} {
+        mins_{j["mins"].begin(), j["mins"].end()},
+        sizes_{j["sizes"].begin(), j["sizes"].end()} {
     assert(maxs_.size() == mins_.size());
+    assert(maxs_.size() == sizes_.size());
   }
   size_t NumDim() const { return maxs_.size(); }
   std::vector<size_t> Dims() const {
@@ -27,20 +29,13 @@ class Linearizer {
     std::reverse(dims.begin(), dims.end());
     return dims;
   }
-  std::vector<size_t> Sizes() const {
-    std::vector<size_t> sizes(NumDim());
-    for (auto d : Dims()) {
-      sizes[d] = (maxs_[d] - mins_[d] + 1) * 2 - 1;
-    }
-    return sizes;
-  }
   std::vector<Int> Weights() const {
     std::vector<Int> weights(NumDim(), 1);
     for (auto d : Dims()) {
       if (d == 0) {
         continue;
       }
-      weights[d] = weights[d - 1] * Sizes()[d - 1];
+      weights[d] = weights[d - 1] * sizes_[d - 1];
     }
     return weights;
   }
@@ -66,10 +61,12 @@ class Linearizer {
   std::vector<Int> operator()(Int rattr) const { return Restore(rattr); }
   const auto& Mins() const { return mins_; }
   const auto& Maxs() const { return maxs_; }
+  const auto& Sizes() const { return sizes_; }
 
  private:
   std::vector<Int> maxs_;
   std::vector<Int> mins_;
+  std::vector<Int> sizes_;
 };
 
 #endif  // LINEARIZER_H_
