@@ -72,6 +72,7 @@ int main(int argc, char* argv[]) {
   }
   size_t num_pruned = 3;
   if (json_root.contains("num_pruned")) {
+    LOG(INFO) << "num_pruned: " << json_root["num_pruned"];
     num_pruned = json_root["num_pruned"];
   }
 
