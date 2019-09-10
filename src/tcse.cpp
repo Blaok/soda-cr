@@ -43,6 +43,8 @@ int main(int argc, char* argv[]) {
 
   string kGreedyStr = "--greedy";
   string kBruteForceStr = "--brute-force";
+  string kBottomUp = "--bottom-up";
+  string kTopDown = "--top-down";
   string usage = string("usage: ") + argv[0] + " [" + kGreedyStr + "|" +
                  kBruteForceStr + "]";
   Strategy strategy = Strategy::kDefault;
@@ -50,6 +52,12 @@ int main(int argc, char* argv[]) {
   if (argc == 2) {
     if (argv[1] == kBruteForceStr) {
       strategy = Strategy::kBruteForce;
+    } else if (argv[1] == kTopDown) {
+      strategy = Strategy::kBruteForce;
+      Schedules::bottom_up = false;
+    } else if (argv[1] == kBottomUp) {
+      strategy = Strategy::kBruteForce;
+      Schedules::bottom_up = true;
     } else if (argv[1] == kGreedyStr) {
       strategy = Strategy::kGreedy;
     }

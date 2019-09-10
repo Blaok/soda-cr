@@ -63,6 +63,7 @@ struct Schedules {
   Bits operands;
   mutable std::vector<AAttrUnion> schedules;
   static bool cache_schedules;
+  static bool bottom_up;
 
   static std::atomic_uint64_t constructed;
   static std::atomic_uint64_t deconstructed;
@@ -119,6 +120,7 @@ struct Schedules {
     Schedule::Ptr best;
     size_t num_ops = 0;
     size_t total_distance = 0;
+    size_t num_schedule = 0;
     for (const auto& aattr_union : schedules) {
       auto schedule = std::get<Schedule::Ptr>(aattr_union);
       auto schedule_num_ops = schedule->NumOps();
@@ -129,6 +131,7 @@ struct Schedules {
                             " num_ops: " + std::to_string(num_ops) +
                             " total_distance: " + std::to_string(total_distance)
                       : "");
+      ++num_schedule;
       if (best == nullptr || schedule_num_ops < num_ops ||
           (schedule_num_ops == num_ops &&
            (schedule_total_distance = schedule->TotalDistance()) <
@@ -138,6 +141,7 @@ struct Schedules {
         total_distance = best->TotalDistance();
       }
     }
+    LOG(INFO) << num_schedule << " schedules evaluated";
     return *best;
   }
 };

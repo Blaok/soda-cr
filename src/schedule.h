@@ -177,6 +177,13 @@ inline void intrusive_ptr_release(const Schedule* ptr) {
 
 using AAttrUnion = Schedule::ChildType;
 
+inline Schedule::Ptr PtrOrNull(const AAttrUnion& aattr) {
+  if (auto ptr = std::get_if<Schedule::Ptr>(&aattr)) {
+    return *ptr;
+  }
+  return nullptr;
+}
+
 namespace std {
 
 template <>
