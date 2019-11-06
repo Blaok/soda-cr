@@ -291,5 +291,9 @@ Generator<Schedule::Ptr> GreedySchedules(const std::vector<AttrUnion>& aattrs,
 Schedule BestGreedySchedule(const std::vector<RAttr>& rattrs,
                             const std::vector<AAttr>& aattrs,
                             const Linearizer* linearizer, size_t num_pruned);
+Schedule BestBeamSchedule(const std::vector<RAttr>& rattrs,
+                          const std::vector<AAttr>& aattrs,
+                          const Linearizer* linearizer, size_t beam_width,
+                          double timeout /* seconds */);
 
 #endif  // SCHEDULE_H_

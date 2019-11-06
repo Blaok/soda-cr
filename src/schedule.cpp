@@ -18,10 +18,14 @@
 using std::atomic_uint64_t;
 using std::equal_to;
 using std::get;
+using std::make_move_iterator;
+using std::make_unique;
 using std::max;
 using std::min;
 using std::pair;
 using std::queue;
+using std::tuple;
+using std::unique_ptr;
 using std::unordered_map;
 using std::unordered_set;
 using std::vector;
@@ -605,6 +609,331 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
       }
     }
   }
+}
+
+// (conflict_count, linear_schedule, attrs)
+// the linear schedule is for faster comparison
+using CandidateType =
+    tuple<size_t, Schedule::Ptr, unique_ptr<vector<AttrUnion>>>;
+
+bool CandidateCmp(const CandidateType& lhs, const CandidateType& rhs) {
+  const auto& [conflict_count_l, schedule_l, candidate_l] = lhs;
+  const auto& [conflict_count_r, schedule_r, candidate_r] = rhs;
+  return (conflict_count_l < conflict_count_r ||
+          (conflict_count_l == conflict_count_r && *schedule_l < *schedule_r));
+};
+
+vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
+                                    const Linearizer* linearizer) {
+  VLOG(2) << "prepare data structures";
+  unordered_map<AttrUnion, size_t> attr_map;
+  unordered_map<size_t, AttrUnion> new_attrs_map;
+  for (size_t i = 0; i < attrs.size(); ++i) {
+    attr_map[attrs[i]] = i;
+    new_attrs_map[i] = {attrs[i].rattr, attrs[i].aattr};
+    VLOG(3) << "recv attr " << attrs[i];
+  }
+
+  // the value of reuses is a pair of <reuse list, insertion order>
+  // each list element is a pair of <idx_l, idx_r>
+  unordered_map<Schedule::Ptr, pair<std::list<pair<size_t, size_t>>, size_t>>
+      reuses;
+  unordered_map<Schedule::Ptr, size_t> conflict_count;
+
+  VLOG(2) << "look for reuse";
+  for (size_t i : Range(attrs.size())) {
+    const auto& [left_rattr, left_aattr] = attrs[i];
+    for (size_t j : Range(attrs.size(), i + 1)) {
+      const auto& [right_rattr, right_aattr] = attrs[j];
+      VLOG(3) << "checking reuse of " << attrs[i] << " + " << attrs[j];
+      Schedule::Ptr operation{
+          new Schedule{left_aattr, right_aattr,
+                       static_cast<RAttr>(right_rattr - left_rattr)}};
+      if (reuses.count(operation)) {
+        VLOG(4) << "  already seen";
+        continue;
+      }
+
+      // look for reuse of this operation over all operands
+      auto& indices = reuses[operation].first;
+      reuses[operation].second = reuses.size();
+      // reuses.size() is used to keep track of the insertion order
+      // it is ok because we won't delete from it until we've finished
+      // inserting
+      vector<vector<pair<int64_t, int64_t>>> group_lists;
+      unordered_map<size_t, size_t> group_table;
+      for (size_t idx_l : Range(attrs.size())) {
+        VLOG(4) << "  examining " << attrs[idx_l];
+        const auto& attr_l = attrs[idx_l];
+        const auto& [rattr_l, aattr_l] = attr_l;
+        if (!equal_to<AAttrUnion>{}(aattr_l, left_aattr)) {
+          continue;
+        }
+        AttrUnion attr_r = {
+            static_cast<RAttr>(rattr_l + right_rattr - left_rattr),
+            right_aattr};
+        auto idx_r_iter = attr_map.find(attr_r);
+        if (idx_r_iter == attr_map.end()) {
+          continue;
+        }
+        size_t idx_r = idx_r_iter->second;
+        // (idx_l, idx_r) is compatible with `operation`
+        VLOG(4) << "(" << idx_l << ", " << idx_r << ") is compatible with "
+                << *operation;
+        size_t group_id = 0;
+        auto iter = group_table.find(idx_l);
+        if (iter == group_table.end()) {
+          iter = group_table.find(idx_r);
+          if (iter == group_table.end()) {
+            group_id = group_lists.size();
+            group_lists.emplace_back();
+          } else {
+            group_id = iter->second;
+          }
+        } else {
+          group_id = iter->second;
+        }
+        group_lists[group_id].emplace_back(idx_l, idx_r);
+        group_table[idx_l] = group_id;
+        group_table[idx_r] = group_id;
+      }
+      VLOG(3) << "  generated group lists";
+
+      for (const auto& group_list : group_lists) {
+        if (group_list.size() > 1) {
+          if (VLOG_IS_ON(3)) {
+            std::string group_list_str{"["};
+            for (const auto& p : group_list) {
+              group_list_str += "(" + std::to_string(p.first) + ", " +
+                                std::to_string(p.second) + "), ";
+            }
+            group_list_str.pop_back();
+            *group_list_str.rbegin() = ']';
+            VLOG(3) << "conflict group of " << *operation << ": "
+                    << group_list_str;
+          }
+          if (conflict_count.count(operation) == 0) {
+            conflict_count[operation] = 0;
+          }
+          ++conflict_count[operation];
+        }
+      }
+
+      for (const auto& group_list : group_lists) {
+        if (group_list.size() % 2 != 0) {
+          for (size_t i = 0; i < group_list.size(); i += 2) {
+            VLOG(5) << "    add {" << group_list[i].first << ", "
+                    << group_list[i].second << "} to group list";
+            indices.push_back(group_list[i]);
+          }
+        }
+      }
+      VLOG(3) << "  added odd conflict group lists";
+
+      auto cmp = [](const auto& lhs, const auto& rhs) -> bool {
+        return lhs.first < rhs.first;
+      };
+      int64_t min_idx_l =
+          indices.empty()
+              ? 0
+              : std::min_element(indices.begin(), indices.end(), cmp)->first;
+      int64_t max_idx_l =
+          indices.empty()
+              ? -1
+              : std::max_element(indices.begin(), indices.end(), cmp)->first;
+      VLOG(3) << "min_idx_l: " << min_idx_l << " | max_idx_l: " << max_idx_l;
+
+      for (const auto& group_list : group_lists) {
+        if (group_list.size() % 2 == 0) {
+          auto span_0 =
+              attrs[max(((++group_list.rbegin())->first), max_idx_l)].rattr -
+              attrs[min(group_list.begin()->first, min_idx_l)].rattr;
+          auto span_1 =
+              attrs[max((group_list.rbegin()->first), max_idx_l)].rattr -
+              attrs[min((++group_list.begin())->first, min_idx_l)].rattr;
+          VLOG(5) << "span 0: " << span_0 << ", span 1: " << span_1;
+          auto start = span_0 < span_1 ? 0 : 1;
+          for (size_t i = start; i < group_list.size(); i += 2) {
+            indices.push_back(group_list[i]);
+          }
+        }
+      }
+      continue;
+
+      unordered_set<size_t> used;
+      for (size_t idx_l : Range(attrs.size())) {
+        VLOG(4) << "  examining " << attrs[idx_l];
+        const auto& attr_l = attrs[idx_l];
+        const auto& [rattr_l, aattr_l] = attr_l;
+        if (!equal_to<AAttrUnion>{}(aattr_l, left_aattr) || used.count(idx_l)) {
+          continue;
+        }
+        AttrUnion attr_r = {
+            static_cast<RAttr>(rattr_l + right_rattr - left_rattr),
+            right_aattr};
+        auto idx_r_iter = attr_map.find(attr_r);
+        if (idx_r_iter == attr_map.end() || used.count(idx_r_iter->second)) {
+          continue;
+        }
+        size_t idx_r = idx_r_iter->second;
+        reuses[operation].first.push_back({idx_l, idx_r});
+        used.insert({idx_l, idx_r});
+        VLOG(4) << "  found (re)use of " << attrs[idx_l] << " + "
+                << attrs[idx_r];
+      }
+    }
+  }
+
+  // filter out operations that cannot be reused
+  // what's left may not all be useful because they overlap
+  VLOG(2) << "confirm reuse";
+  auto reuses_iter = reuses.begin();
+  while (reuses_iter != reuses.end()) {
+    if (reuses_iter->second.first.size() <= 1) {
+      reuses_iter = reuses.erase(reuses_iter);
+    } else {
+      ++reuses_iter;
+    }
+  }
+
+  auto aligns = [&linearizer](RAttr dis, size_t dim) -> bool {
+    assert(linearizer != nullptr);
+    auto dims = linearizer->Dims();
+    return std::all_of(dims.begin(), dims.end(), [&](const auto d) -> bool {
+      const auto idx = linearizer->Restore(dis)[d];
+      const auto min_idx = linearizer->Mins()[d];
+      return d == dim ? idx != min_idx : idx == min_idx;
+    });
+  };
+
+  if (linearizer != nullptr && reuses.size() > attrs.size()) {
+    for (auto dim : linearizer->ReversedDims()) {
+      if (std::any_of(reuses.begin(), reuses.end(),
+                      [&](const auto& item) -> bool {
+                        auto& [op, _] = item;
+                        return aligns(op->distance, dim);
+                      })) {
+        auto reuses_iter = reuses.begin();
+        while (reuses_iter != reuses.end()) {
+          auto& [op, _] = *reuses_iter;
+          auto& [indices, insertion_order] = reuses_iter->second;
+          if (aligns(op->distance, dim)) {
+            auto indices_iter = indices.begin();
+            while (indices_iter != indices.end()) {
+              auto [idx_l, idx_r] = *indices_iter;
+              if (aligns(attrs[idx_r].rattr - attrs[idx_l].rattr, dim)) {
+                ++indices_iter;
+              } else {
+                indices_iter = indices.erase(indices_iter);
+              }
+            }
+            ++reuses_iter;
+          } else {
+            reuses_iter = reuses.erase(reuses_iter);
+          }
+        }
+      }
+    }
+  }
+
+  vector<CandidateType> candidates;
+  LOG(INFO) << "num of reuses: " << reuses.size();
+  for (const auto& [op, _] : reuses) {
+    VLOG(5) << "find all compatible reuses that include " << *op;
+    auto new_attrs = new_attrs_map;
+    unordered_set<size_t> used;
+    auto do_reuse_for = [&](const Schedule::Ptr& schedule) {
+      auto reused_indices{reuses[schedule].first};
+      auto iter = reused_indices.begin();
+      while (iter != reused_indices.end()) {
+        if (used.count(iter->first) == 0 && used.count(iter->second) == 0) {
+          ++iter;
+        } else {
+          iter = reused_indices.erase(iter);
+        }
+      }
+      if (reused_indices.size() > 1) {
+        for (auto [idx_l, idx_r] : reused_indices) {
+          VLOG(6) << "reusing " << *schedule << " for " << attrs[idx_l] << " + "
+                  << attrs[idx_r];
+          new_attrs[idx_l] = {new_attrs[idx_l].rattr, schedule};
+          new_attrs.erase(idx_r);
+          used.insert({idx_l, idx_r});
+        }
+      }
+    };
+    do_reuse_for(op);
+    vector<pair<decltype(reuses)::key_type, decltype(reuses)::mapped_type>>
+        sorted_reuses{reuses.begin(), reuses.end()};
+    std::sort(sorted_reuses.begin(), sorted_reuses.end(),
+              [](const auto& lhs, const auto& rhs) -> bool {
+                if (lhs.second.first.size() == rhs.second.first.size()) {
+                  if (lhs.first->distance == rhs.first->distance) {
+                    return lhs.second.second < rhs.second.second;
+                  }
+                  return lhs.first->distance < rhs.first->distance;
+                }
+                return lhs.second.first.size() > rhs.second.first.size();
+              });
+    for (const auto& [op, _] : sorted_reuses) {
+      do_reuse_for(op);
+    }
+    auto new_attr_vec = std::make_unique<vector<AttrUnion>>();
+    new_attr_vec->reserve(new_attrs.size());
+    for (size_t i = 0; i < attrs.size(); ++i) {
+      if (new_attrs.count(i)) {
+        new_attr_vec->push_back(new_attrs[i]);
+      }
+    }
+    candidates.emplace_back(
+        conflict_count[op],
+        LinearSchedule(new_attr_vec->begin(), new_attr_vec->end()),
+        std::move(new_attr_vec));
+  }
+  return candidates;
+}
+
+Schedule BestBeamSchedule(const vector<RAttr>& rattrs,
+                          const vector<AAttr>& aattrs,
+                          const Linearizer* linearizer, size_t beam_width,
+                          double timeout) {
+  vector<AttrUnion> attrs;
+  attrs.reserve(rattrs.size());
+  for (size_t i = 0; i < rattrs.size(); ++i) {
+    attrs.push_back(AttrUnion{rattrs[i], aattrs[i]});
+  }
+
+  Schedule::Ptr best = LinearSchedule(attrs.begin(), attrs.end());
+  vector<CandidateType> candidates;
+  candidates.emplace_back(false, best, make_unique<vector<AttrUnion>>(attrs));
+
+  auto start = high_resolution_clock::now();
+  while (candidates.size() > 0) {
+    auto old_candidates = std::move(candidates);
+    candidates.clear();
+    for (const auto& [_, schedule, attrs] : old_candidates) {
+      auto new_candidates = BeamSchedules(*attrs, linearizer);
+      candidates.insert(candidates.end(),
+                        make_move_iterator(new_candidates.begin()),
+                        make_move_iterator(new_candidates.end()));
+    }
+    if (candidates.size() > beam_width) {
+      std::nth_element(candidates.begin(), candidates.begin() + beam_width,
+                       candidates.end(), CandidateCmp);
+      candidates.erase(candidates.begin() + beam_width, candidates.end());
+    }
+    for (const auto& [_, schedule, attrs] : candidates) {
+      if (*schedule < *best) {
+        best = schedule;
+      }
+      auto now = high_resolution_clock::now();
+      if (duration_cast<duration<double>>(now - start).count() > timeout) {
+        LOG(INFO) << "timeout after " << timeout << "s.";
+        return *best;
+      }
+    }
+  }
+  return *best;
 }
 
 // json serializers

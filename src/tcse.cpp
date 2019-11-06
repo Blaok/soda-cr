@@ -29,7 +29,7 @@ using std::chrono::system_clock;
 
 using nlohmann::json;
 
-enum class Strategy { kGreedy, kBruteForce, kDefault = kGreedy };
+enum class Strategy { kBeam, kGreedy, kBruteForce, kDefault = kBeam };
 
 int main(int argc, char* argv[]) {
   google::InitGoogleLogging(argv[0]);
@@ -41,6 +41,7 @@ int main(int argc, char* argv[]) {
   VLOG(1) << "sizeof(AAttrUninon) = " << sizeof(AAttrUnion);
   VLOG(1) << "sizeof(Schedule::Ptr) = " << sizeof(Schedule::Ptr);
 
+  string kBeamStr = "--beam";
   string kGreedyStr = "--greedy";
   string kBruteForceStr = "--brute-force";
   string kBottomUp = "--bottom-up";
@@ -60,6 +61,8 @@ int main(int argc, char* argv[]) {
       Schedules::bottom_up = true;
     } else if (argv[1] == kGreedyStr) {
       strategy = Strategy::kGreedy;
+    } else if (argv[1] == kBeamStr) {
+      strategy = Strategy::kBeam;
     }
   } else if (argc > 2) {
     LOG(ERROR) << "too many arguments";
@@ -83,10 +86,24 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "num_pruned: " << json_root["num_pruned"];
     num_pruned = json_root["num_pruned"];
   }
+  size_t beam_width = 5;
+  if (json_root.contains("beam_width")) {
+    LOG(INFO) << "beam_width: " << json_root["beam_width"];
+    beam_width = json_root["beam_width"];
+  }
+  double timeout = 600;  // seconds
+  if (json_root.contains("timeout")) {
+    LOG(INFO) << "timeout: " << json_root["timeout"] << "s";
+    timeout = json_root["timeout"];
+  }
 
   Schedule best;
   auto t1 = system_clock::now();
   switch (strategy) {
+    case Strategy::kBeam:
+      best = BestBeamSchedule(rattrs, aattrs, linearizer.get(), beam_width,
+                              timeout);
+      break;
     case Strategy::kGreedy:
       best = BestGreedySchedule(rattrs, aattrs, linearizer.get(), num_pruned);
       break;
