@@ -91,6 +91,10 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "beam_width: " << json_root["beam_width"];
     beam_width = json_root["beam_width"];
   }
+  if (const char* env = getenv("SODA_CR_BEAM_WIDTH")) {
+    beam_width = atol(env);
+    LOG(INFO) << "beam_width: " << beam_width;
+  }
   double timeout = 600;  // seconds
   if (json_root.contains("timeout")) {
     LOG(INFO) << "timeout: " << json_root["timeout"] << "s";
