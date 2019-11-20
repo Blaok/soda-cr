@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "num_pruned: " << json_root["num_pruned"];
     num_pruned = json_root["num_pruned"];
   }
-  size_t beam_width = 5;
+  size_t beam_width = 16;
   if (json_root.contains("beam_width")) {
     LOG(INFO) << "beam_width: " << json_root["beam_width"];
     beam_width = json_root["beam_width"];
