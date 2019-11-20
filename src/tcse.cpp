@@ -100,13 +100,22 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "timeout: " << json_root["timeout"] << "s";
     timeout = json_root["timeout"];
   }
+  uint64_t optimizations = 7;
+  if (json_root.contains("optimizations")) {
+    optimizations = json_root["optimizations"];
+    LOG(INFO) << "optimizations: " << optimizations;
+  }
+  if (const char* env = getenv("SODA_CR_OPTS")) {
+    optimizations = atoll(env);
+    LOG(INFO) << "optimizations: " << optimizations;
+  }
 
   Schedule best;
   auto t1 = system_clock::now();
   switch (strategy) {
     case Strategy::kBeam:
       best = BestBeamSchedule(rattrs, aattrs, linearizer.get(), beam_width,
-                              timeout);
+                              timeout, optimizations);
       break;
     case Strategy::kGreedy:
       best = BestGreedySchedule(rattrs, aattrs, linearizer.get(), num_pruned);

@@ -294,6 +294,6 @@ Schedule BestGreedySchedule(const std::vector<RAttr>& rattrs,
 Schedule BestBeamSchedule(const std::vector<RAttr>& rattrs,
                           const std::vector<AAttr>& aattrs,
                           const Linearizer* linearizer, size_t beam_width,
-                          double timeout /* seconds */);
+                          double timeout /* seconds */, uint64_t optimizations);
 
 #endif  // SCHEDULE_H_

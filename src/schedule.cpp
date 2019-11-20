@@ -624,7 +624,11 @@ bool CandidateCmp(const CandidateType& lhs, const CandidateType& rhs) {
 };
 
 vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
-                                    const Linearizer* linearizer) {
+                                    const Linearizer* linearizer,
+                                    uint64_t optimizations = 7) {
+  bool greedy_selection = optimizations & (1 << 0);
+  bool conflict_resolution = optimizations & (1 << 1);
+  bool regularity_exaction = optimizations & (1 << 2);
   VLOG(2) << "prepare data structures";
   unordered_map<AttrUnion, size_t> attr_map;
   unordered_map<size_t, AttrUnion> new_attrs_map;
@@ -700,7 +704,7 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
       VLOG(3) << "  generated group lists";
 
       for (const auto& group_list : group_lists) {
-        if (group_list.size() > 1) {
+        if (group_list.size() > 1 && conflict_resolution) {
           if (VLOG_IS_ON(3)) {
             std::string group_list_str{"["};
             for (const auto& p : group_list) {
@@ -806,7 +810,8 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
     });
   };
 
-  if (linearizer != nullptr && reuses.size() > attrs.size()) {
+  if (linearizer != nullptr && reuses.size() > attrs.size() &&
+      regularity_exaction) {
     for (auto dim : linearizer->ReversedDims()) {
       if (std::any_of(reuses.begin(), reuses.end(),
                       [&](const auto& item) -> bool {
@@ -863,20 +868,22 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
       }
     };
     do_reuse_for(op);
-    vector<pair<decltype(reuses)::key_type, decltype(reuses)::mapped_type>>
-        sorted_reuses{reuses.begin(), reuses.end()};
-    std::sort(sorted_reuses.begin(), sorted_reuses.end(),
-              [](const auto& lhs, const auto& rhs) -> bool {
-                if (lhs.second.first.size() == rhs.second.first.size()) {
-                  if (lhs.first->distance == rhs.first->distance) {
-                    return lhs.second.second < rhs.second.second;
+    if (greedy_selection) {
+      vector<pair<decltype(reuses)::key_type, decltype(reuses)::mapped_type>>
+          sorted_reuses{reuses.begin(), reuses.end()};
+      std::sort(sorted_reuses.begin(), sorted_reuses.end(),
+                [](const auto& lhs, const auto& rhs) -> bool {
+                  if (lhs.second.first.size() == rhs.second.first.size()) {
+                    if (lhs.first->distance == rhs.first->distance) {
+                      return lhs.second.second < rhs.second.second;
+                    }
+                    return lhs.first->distance < rhs.first->distance;
                   }
-                  return lhs.first->distance < rhs.first->distance;
-                }
-                return lhs.second.first.size() > rhs.second.first.size();
-              });
-    for (const auto& [op, _] : sorted_reuses) {
-      do_reuse_for(op);
+                  return lhs.second.first.size() > rhs.second.first.size();
+                });
+      for (const auto& [op, _] : sorted_reuses) {
+        do_reuse_for(op);
+      }
     }
     auto new_attr_vec = std::make_unique<vector<AttrUnion>>();
     new_attr_vec->reserve(new_attrs.size());
@@ -896,7 +903,7 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
 Schedule BestBeamSchedule(const vector<RAttr>& rattrs,
                           const vector<AAttr>& aattrs,
                           const Linearizer* linearizer, size_t beam_width,
-                          double timeout) {
+                          double timeout, uint64_t optimizations) {
   vector<AttrUnion> attrs;
   attrs.reserve(rattrs.size());
   for (size_t i = 0; i < rattrs.size(); ++i) {
@@ -912,7 +919,7 @@ Schedule BestBeamSchedule(const vector<RAttr>& rattrs,
     auto old_candidates = std::move(candidates);
     candidates.clear();
     for (const auto& [_, schedule, attrs] : old_candidates) {
-      auto new_candidates = BeamSchedules(*attrs, linearizer);
+      auto new_candidates = BeamSchedules(*attrs, linearizer, optimizations);
       candidates.insert(candidates.end(),
                         make_move_iterator(new_candidates.begin()),
                         make_move_iterator(new_candidates.end()));
