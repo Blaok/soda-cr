@@ -14,12 +14,10 @@ add_executable(calc-cost src/calc-cost.cpp)
 target_compile_features(schedule PUBLIC cxx_std_17)
 target_compile_options(schedule PUBLIC -stdlib=libc++ -fcoroutines-ts -Wall)
 target_compile_options(glog PUBLIC -stdlib=libc++)
-target_link_libraries(schedule
-                      PRIVATE glpk
-                      PUBLIC glog::glog
-                             nlohmann_json::nlohmann_json
-                             libc++.a
-                             libc++abi.a)
+target_link_libraries(
+  schedule
+  PRIVATE libglpk.a libltdl.so libz.so
+  PUBLIC glog::glog nlohmann_json::nlohmann_json libc++.a libc++abi.a)
 target_link_libraries(schedules PUBLIC schedule)
 target_link_libraries(tcse PRIVATE schedules schedule)
 target_link_libraries(calc-cost PRIVATE schedule)
