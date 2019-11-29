@@ -6,6 +6,7 @@
 #include <list>
 #include <memory>
 #include <queue>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,11 +20,13 @@ using std::atomic_uint64_t;
 using std::equal_to;
 using std::get;
 using std::make_move_iterator;
+using std::make_shared;
 using std::make_unique;
 using std::max;
 using std::min;
 using std::pair;
 using std::queue;
+using std::shared_ptr;
 using std::tuple;
 using std::unique_ptr;
 using std::unordered_map;
@@ -616,16 +619,19 @@ Generator<Schedule::Ptr> GreedySchedules(const vector<AttrUnion>& attrs,
 using CandidateType =
     tuple<size_t, Schedule::Ptr, unique_ptr<vector<AttrUnion>>>;
 
-bool CandidateCmp(const CandidateType& lhs, const CandidateType& rhs) {
-  const auto& [conflict_count_l, schedule_l, candidate_l] = lhs;
-  const auto& [conflict_count_r, schedule_r, candidate_r] = rhs;
-  return (conflict_count_l < conflict_count_r ||
-          (conflict_count_l == conflict_count_r && *schedule_l < *schedule_r));
+struct CandidateCmp {
+  bool operator()(const CandidateType& lhs, const CandidateType& rhs) const {
+    const auto& [conflict_count_l, schedule_l, candidate_l] = lhs;
+    const auto& [conflict_count_r, schedule_r, candidate_r] = rhs;
+    return (
+        conflict_count_l < conflict_count_r ||
+        (conflict_count_l == conflict_count_r && *schedule_l < *schedule_r));
+  }
 };
 
-vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
-                                    const Linearizer* linearizer,
-                                    uint64_t optimizations = 7) {
+Generator<shared_ptr<CandidateType>> BeamSchedules(
+    const vector<AttrUnion>& attrs, const Linearizer* linearizer,
+    uint64_t optimizations = 7) {
   bool greedy_selection = optimizations & (1 << 0);
   bool conflict_resolution = optimizations & (1 << 1);
   bool regularity_exaction = optimizations & (1 << 2);
@@ -729,6 +735,7 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
             VLOG(5) << "    add {" << group_list[i].first << ", "
                     << group_list[i].second << "} to group list";
             indices.push_back(group_list[i]);
+            if (!conflict_resolution) break;
           }
         }
       }
@@ -759,6 +766,7 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
           auto start = span_0 < span_1 ? 0 : 1;
           for (size_t i = start; i < group_list.size(); i += 2) {
             indices.push_back(group_list[i]);
+            if (!conflict_resolution) break;
           }
         }
       }
@@ -841,7 +849,6 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
     }
   }
 
-  vector<CandidateType> candidates;
   LOG(INFO) << "num of reuses: " << reuses.size();
   for (const auto& [op, _] : reuses) {
     VLOG(5) << "find all compatible reuses that include " << *op;
@@ -892,12 +899,11 @@ vector<CandidateType> BeamSchedules(const vector<AttrUnion>& attrs,
         new_attr_vec->push_back(new_attrs[i]);
       }
     }
-    candidates.emplace_back(
+    co_yield make_shared<CandidateType>(
         conflict_count[op],
         LinearSchedule(new_attr_vec->begin(), new_attr_vec->end()),
         std::move(new_attr_vec));
   }
-  return candidates;
 }
 
 Schedule BestBeamSchedule(const vector<RAttr>& rattrs,
@@ -911,35 +917,45 @@ Schedule BestBeamSchedule(const vector<RAttr>& rattrs,
   }
 
   Schedule::Ptr best = LinearSchedule(attrs.begin(), attrs.end());
-  vector<CandidateType> candidates;
-  candidates.emplace_back(false, best, make_unique<vector<AttrUnion>>(attrs));
+  std::set<CandidateType, CandidateCmp> candidates;
+  candidates.emplace(false, best, make_unique<vector<AttrUnion>>(attrs));
 
   auto start = high_resolution_clock::now();
-  while (candidates.size() > 0) {
+  int count = 0;
+  bool done = false;
+  while (!done && candidates.size() > 0) {
     auto old_candidates = std::move(candidates);
     candidates.clear();
     for (const auto& [_, schedule, attrs] : old_candidates) {
-      auto new_candidates = BeamSchedules(*attrs, linearizer, optimizations);
-      candidates.insert(candidates.end(),
-                        make_move_iterator(new_candidates.begin()),
-                        make_move_iterator(new_candidates.end()));
-    }
-    if (candidates.size() > beam_width) {
-      std::nth_element(candidates.begin(), candidates.begin() + beam_width,
-                       candidates.end(), CandidateCmp);
-      candidates.erase(candidates.begin() + beam_width, candidates.end());
-    }
-    for (const auto& [_, schedule, attrs] : candidates) {
-      if (*schedule < *best) {
-        best = schedule;
+      LOG(INFO) << "schedules: " << Schedule::constructed << " / "
+                << Schedule::deconstructed;
+      for (const auto& c : BeamSchedules(*attrs, linearizer, optimizations)) {
+        const auto& schedule = std::get<1>(*c);
+        if (*schedule < *best) {
+          best = schedule;
+        }
+        LOG_EVERY_N(INFO, 100)
+            << "#candidates explored: " << count
+            << "; current best: " << best->NumOps() << " ops, "
+            << best->TotalDistance() << " total distance";
+        ++count;
+        candidates.emplace(std::move(*c));
+        if (candidates.size() > beam_width) {
+          candidates.erase(--candidates.end());
+        }
+        if (!done) {
+          auto now = high_resolution_clock::now();
+          done = duration_cast<duration<double>>(now - start).count() > timeout;
+        }
+        if (done) break;
       }
-      auto now = high_resolution_clock::now();
-      if (duration_cast<duration<double>>(now - start).count() > timeout) {
-        LOG(INFO) << "timeout after " << timeout << "s.";
-        return *best;
-      }
+      if (done) break;
     }
   }
+  if (done) {
+    LOG(INFO) << "timeout after " << timeout << "s.";
+  }
+  LOG(INFO) << "#candidates explored: " << count;
   return *best;
 }
 
