@@ -12,6 +12,6 @@ git clone https://github.com/Blaok/soda-cr
 cd soda-cr
 mkdir build
 cd build
-cmake ..
+cmake .. -D CXX=clang++-8
 make
 ```
