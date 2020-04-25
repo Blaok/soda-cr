@@ -99,11 +99,11 @@ bool Inline(
 
 size_t Schedule::TotalDistance() const {
   if (this->total_distance == 0) {
-    unordered_map<Schedule::Ptr, size_t> tcse_vars;
-    unordered_map<size_t, Schedule::Ptr> tcse_var_table;
+    unordered_map<Schedule::Ptr, size_t> cr_vars;
+    unordered_map<size_t, Schedule::Ptr> cr_var_table;
     auto self = Schedule::Ptr(this);
-    tcse_vars[self] = 1;
-    tcse_var_table[1] = self;
+    cr_vars[self] = 1;
+    cr_var_table[1] = self;
     // var_0 is input, var_1 is output
 
     unordered_map<Schedule::Ptr, size_t> counter;
@@ -115,11 +115,11 @@ size_t Schedule::TotalDistance() const {
     }
     for (const auto& item : counter) {
       if (item.second > 1) {
-        tcse_vars[item.first] = tcse_vars.size() + 1;
-        tcse_var_table[tcse_vars.size()] = item.first;
+        cr_vars[item.first] = cr_vars.size() + 1;
+        cr_var_table[cr_vars.size()] = item.first;
       }
     }
-    for (const auto& item : tcse_vars) {
+    for (const auto& item : cr_vars) {
       VLOG(2) << "var_" << item.second << ": " << *item.first;
     }
 
@@ -132,10 +132,10 @@ size_t Schedule::TotalDistance() const {
     while (!vars_to_process.empty()) {
       auto schedule = vars_to_process.front();
       vars_to_process.pop();
-      auto dst_vid = tcse_vars[schedule];
+      auto dst_vid = cr_vars[schedule];
       vars_to_process_set.erase(dst_vid);
       vars_processed.insert(dst_vid);
-      for (const auto& attr : GetAttrs(schedule, tcse_vars)) {
+      for (const auto& attr : GetAttrs(schedule, cr_vars)) {
         auto offset = attr.first;
         auto src_vid = attr.second;
         VLOG(2) << "var_" << dst_vid << " accesses var_" << src_vid << " @ "
@@ -148,7 +148,7 @@ size_t Schedule::TotalDistance() const {
                                        max(offset, max_offset)};
         if (vars_processed.count(src_vid) == 0 &&
             vars_to_process_set.count(src_vid) == 0) {
-          vars_to_process.push(tcse_var_table[src_vid]);
+          vars_to_process.push(cr_var_table[src_vid]);
           vars_to_process_set.insert(src_vid);
         }
       }
